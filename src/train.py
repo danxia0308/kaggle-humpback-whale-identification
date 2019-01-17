@@ -221,9 +221,9 @@ def evaluate(logits, labels, step, summary_writer, stat, epoch):
 
 def main():
     model_def='models.inception_resnet_v1'
-    logs_base_dir = '/home/nemo/logs/'
-    models_base_dir = '/home/nemo/models/'
-    data_dir='/home/nemo/kaggle/data/train/'
+    logs_base_dir = '/home/nemo/logs/kaggle'
+    models_base_dir = '/home/nemo/models/kaggle'
+    data_dir='/home/nemo/kaggle/data/train_160/'
     batch_size=90
     epoch_size=1000
     random_rotate=True
