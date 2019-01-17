@@ -41,6 +41,7 @@ def get_data_set(path_dir):
         class_name=classes[i]
         image_paths=[join(path_dir,class_name,img) for img in os.listdir(join(path_dir,class_name))]
         dataset.append(ImageClass(class_name, image_paths))
+    return dataset
 
 def get_image_paths_and_labels(dataset):
     image_paths_flat = []
