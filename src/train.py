@@ -197,26 +197,26 @@ def do_train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueu
     summary_writer.add_summary(summary, global_step=step_)
     return True
 
-def evaluate(logits, labels, step, summary_writer, stat, epoch):
-    
-    print('Runnning forward pass on Validate images')
-    nrof_logits=int[logits.get_shape()[0]]
-    count=0
-    for i in range(nrof_logits):
-        emb=logits[i]
-        index = emb.index(max(emb))
-        if (index == labels[i]):
-            count=count+1
-    accuracy=count*100/nrof_logits
-            
-    print('Accuracy: %2.5f' % (accuracy))
-    
-    summary = tf.Summary()
-    #pylint: disable=maybe-no-member
-    summary.value.add(tag='lfw/accuracy', accuracy)
-    summary_writer.add_summary(summary, step)
-    
-    stat['lfw_accuracy'][epoch-1] = accuracy
+# def evaluate(logits, labels, step, summary_writer, stat, epoch):
+#     
+#     print('Runnning forward pass on Validate images')
+#     nrof_logits=int[logits.get_shape()[0]]
+#     count=0
+#     for i in range(nrof_logits):
+#         emb=logits[i]
+#         index = emb.index(max(emb))
+#         if (index == labels[i]):
+#             count=count+1
+#     accuracy=count*100/nrof_logits
+#             
+#     print('Accuracy: %2.5f' % (accuracy))
+#     
+#     summary = tf.Summary()
+#     #pylint: disable=maybe-no-member
+#     summary.value.add(tag='lfw/accuracy', accuracy)
+#     summary_writer.add_summary(summary, step)
+#     
+#     stat['lfw_accuracy'][epoch-1] = accuracy
             
 
 def main():
