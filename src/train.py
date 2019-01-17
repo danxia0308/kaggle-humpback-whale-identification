@@ -16,6 +16,7 @@ import tensorflow.contrib.slim as slim
 import math
 import time
 import sys
+import pdb
 
 
 class ImageClass():
@@ -31,6 +32,7 @@ class ImageClass():
         return len(self.image_paths)
 
 def get_data_set(path_dir):
+    pdb.set_trace()
     classes = os.listdir(path_dir)
     classes.sort()
     class_num = len(classes)
