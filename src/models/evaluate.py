@@ -147,7 +147,8 @@ def get_image_paths_and_labels_for_eval(dataset):
     
 
 def main():
-    
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     with tf.Graph().as_default():
         with tf.Session() as sess:
             image_paths_placeholder = tf.placeholder(tf.string, shape=(None,1), name='image_paths')
@@ -230,6 +231,7 @@ def evaluate(sess, enqueue_op, image_paths_placeholder, labels_placeholder, phas
             count=count+1
             
     print "count=%d, accuracy=%f" %(count, count/nrof_embeddings)
-    
+
+main()
     
     
