@@ -290,6 +290,7 @@ def main():
             for filename in tf.unstack(filenames):
                 file_contents = tf.read_file(filename)
                 image = tf.image.decode_image(file_contents, channels=3)
+                pdb.set_trace()
                 if random_rotate:
                     angle = np.random.uniform(low=-10.0, high=10.0)
                     image = misc.imrotate([image], angle, 'bicubic')
