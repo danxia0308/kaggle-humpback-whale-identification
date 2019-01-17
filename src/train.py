@@ -15,8 +15,28 @@ import numpy as np
 import tensorflow.contrib.slim as slim
 import math
 import time
-import sys
-import pdb
+
+model_def='models.inception_resnet_v1'
+logs_base_dir = '/home/nemo/logs/kaggle'
+models_base_dir = '/home/nemo/models/kaggle'
+data_dir='/home/nemo/kaggle/data/train_160/'
+batch_size=90
+epoch_size=1000
+random_rotate=False
+random_crop=False
+image_size=160
+random_flip=True
+keep_probability=0.6
+embedding_size=512
+weight_decay=5e-4
+learning_rate_decay_epochs=100
+learning_rate_schedule_file='data/learning_rate_schedule_classifier_vggface2.txt'
+optimizer='ADAGRAD'
+gpu_memory_fraction=0.9
+max_nrof_epochs=300
+validate_every_n_epochs=5
+prelogits_hist_max=10.0
+use_fixed_image_standardization=True
 
 
 class ImageClass():
@@ -32,7 +52,6 @@ class ImageClass():
         return len(self.image_paths)
 
 def get_data_set(path_dir):
-    pdb.set_trace()
     classes = os.listdir(path_dir)
     classes.sort()
     class_num = len(classes)
@@ -141,17 +160,17 @@ RANDOM_FLIP = 4
 FIXED_STANDARDIZATION = 8
 FLIP = 16
                
-def do_train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueue_op, image_paths_placeholder, labels_placeholder, 
+def do_train(sess, epoch, image_list, label_list, index_dequeue_op, enqueue_op, image_paths_placeholder, labels_placeholder, 
       learning_rate_placeholder, phase_train_placeholder, batch_size_placeholder, control_placeholder, step, 
       loss, train_op, summary_op, summary_writer, reg_losses, learning_rate_schedule_file, 
       stat, cross_entropy_mean, accuracy, 
       learning_rate, prelogits, random_rotate, random_crop, random_flip, prelogits_norm, prelogits_hist_max, use_fixed_image_standardization):
     batch_number = 0
     
-    if args.learning_rate>0.0:
-        lr = args.learning_rate
-    else:
-        lr = get_learning_rate_from_file(learning_rate_schedule_file, epoch)
+#     if learning_rate>0.0:
+#         lr = learning_rate
+#     else:
+    lr = get_learning_rate_from_file(learning_rate_schedule_file, epoch)
         
     if lr<=0:
         return False 
@@ -169,9 +188,9 @@ def do_train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueu
 
     # Training loop
     train_time = 0
-    while batch_number < args.epoch_size:
+    while batch_number < epoch_size:
         start_time = time.time()
-        feed_dict = {learning_rate_placeholder: lr, phase_train_placeholder:True, batch_size_placeholder:args.batch_size}
+        feed_dict = {learning_rate_placeholder: lr, phase_train_placeholder:True, batch_size_placeholder:batch_size}
         tensor_list = [loss, train_op, step, reg_losses, prelogits, cross_entropy_mean, learning_rate, prelogits_norm, accuracy]
         if batch_number % 100 == 0:
             loss_, _, step_, reg_losses_, prelogits_, cross_entropy_mean_, lr_, prelogits_norm_, accuracy_, summary_str = sess.run(tensor_list + [summary_op], feed_dict=feed_dict)
@@ -189,8 +208,8 @@ def do_train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueu
         stat['prelogits_hist'][epoch-1,:] += np.histogram(np.minimum(np.abs(prelogits_), prelogits_hist_max), bins=1000, range=(0.0, prelogits_hist_max))[0]
         
         duration = time.time() - start_time
-        print('Epoch: [%d][%d/%d]\tTime %.3f\tLoss %2.3f\tXent %2.3f\tRegLoss %2.3f\tAccuracy %2.3f\tLr %2.5f\tCl %2.3f' %
-              (epoch, batch_number+1, args.epoch_size, duration, loss_, cross_entropy_mean_, np.sum(reg_losses_), accuracy_, lr_))
+        print('Epoch: [%d][%d/%d]\tTime %.3f\tLoss %2.3f\tXent %2.3f\tRegLoss %2.3f\tAccuracy %2.3f\tLr %2.5f' %
+              (epoch, batch_number+1, epoch_size, duration, loss_, cross_entropy_mean_, np.sum(reg_losses_), accuracy_, lr_))
         batch_number += 1
         train_time += duration
     # Add validation loss and accuracy to summary
@@ -220,32 +239,14 @@ def do_train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueu
 #     summary_writer.add_summary(summary, step)
 #     
 #     stat['lfw_accuracy'][epoch-1] = accuracy
-            
+     
+def to_rgb(img):
+    w, h = img.shape
+    ret = np.empty((w, h, 3), dtype=np.uint8)
+    ret[:, :, 0] = ret[:, :, 1] = ret[:, :, 2] = img
+    return ret       
 
 def main():
-    model_def='models.inception_resnet_v1'
-    logs_base_dir = '/home/nemo/logs/kaggle'
-    models_base_dir = '/home/nemo/models/kaggle'
-    data_dir='/home/nemo/kaggle/data/train_160/'
-    batch_size=90
-    epoch_size=1000
-    random_rotate=True
-    random_crop=False
-    image_size=160
-    random_flip=True
-    keep_probability=0.6
-    embedding_size=512
-    weight_decay=5e-4
-    learning_rate_decay_epochs=100
-    learning_rate_schedule_file='data/learning_rate_schedule_classifier_vggface2.txt'
-    optimizer='ADAGRAD'
-    gpu_memory_fraction=0.9
-    max_nrof_epochs=300
-    validate_every_n_epochs=5
-    prelogits_hist_max=10.0
-    use_fixed_image_standardization=True
-
-    
     # import network
     network = importlib.import_module(model_def)
     
@@ -290,9 +291,11 @@ def main():
             for filename in tf.unstack(filenames):
                 file_contents = tf.read_file(filename)
                 image = tf.image.decode_image(file_contents, channels=3)
-                pdb.set_trace()
+                if image.shape[0]==2:
+                    image=to_rgb(image)
                 if random_rotate:
                     angle = np.random.uniform(low=-10.0, high=10.0)
+                    print ("image.shape",image.shape)
                     image = misc.imrotate([image], angle, 'bicubic')
                 if random_crop:
                     image = tf.random_crop(image, [image_size, image_size, 3])
@@ -404,6 +407,5 @@ def main():
                 
                 if not cont:
                     break
-                  
 
 main()
