@@ -10,11 +10,13 @@ import numpy as np
 from os.path import join
 
 image_size_str='160,160'
-model='/home/nemo/models/kaggle/20190117-150238'
+model='/home/nemo/models/kaggle/20190117-170215'
 path_dir='/home/nemo/kaggle/data/train_160'
+test_dir='home/nemo/kaggle/data/test'
 use_flipped_images=False
 use_fixed_image_standardization=False
 batch_size=90
+submit=False
 
 class ImageClass():
     "Stores the paths to images for a given class"
@@ -152,7 +154,7 @@ def main():
     with tf.Graph().as_default():
         with tf.Session() as sess:
             image_paths_placeholder = tf.placeholder(tf.string, shape=(None,1), name='image_paths')
-            labels_placeholder = tf.placeholder(tf.int32, shape=(None,1), name='labels')
+            labels_placeholder = tf.placeholder(tf.int64, shape=(None,1), name='labels')
             batch_size_placeholder = tf.placeholder(tf.int32, name='batch_size')
             control_placeholder = tf.placeholder(tf.int32, shape=(None,1), name='control')
             phase_train_placeholder = tf.placeholder(tf.bool, name='phase_train')
@@ -161,7 +163,7 @@ def main():
             image_size1=image_size_str.split(',')
             image_size = (int(image_size1[0]), int(image_size1[1]))
             eval_input_queue = data_flow_ops.FIFOQueue(capacity=2000000,
-                                        dtypes=[tf.string, tf.int32, tf.int32],
+                                        dtypes=[tf.string, tf.int64, tf.int32],
                                         shapes=[(1,), (1,), (1,)],
                                         shared_name=None, name=None)
             enqueue_op = eval_input_queue.enqueue_many([image_paths_placeholder, labels_placeholder, control_placeholder], name='eval_enqueue_op')
@@ -172,7 +174,7 @@ def main():
             load_model(model, input_map=input_map)
         
             # Get output tensor
-            logits = tf.get_default_graph().get_tensor_by_name("logits:0")
+            logits = tf.get_default_graph().get_tensor_by_name("finallogits:0")
                     
             coord = tf.train.Coordinator()
             tf.train.start_queue_runners(coord=coord, sess=sess)

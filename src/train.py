@@ -94,6 +94,28 @@ def _add_loss_summaries(total_loss):
   
     return loss_averages_op
 
+def save_variables_and_metagraph(sess, saver, summary_writer, model_dir, model_name, step):
+    # Save the model checkpoint
+    print('Saving variables')
+    start_time = time.time()
+    checkpoint_path = os.path.join(model_dir, 'model-%s.ckpt' % model_name)
+    saver.save(sess, checkpoint_path, global_step=step, write_meta_graph=False)
+    save_time_variables = time.time() - start_time
+    print('Variables saved in %.2f seconds' % save_time_variables)
+    metagraph_filename = os.path.join(model_dir, 'model-%s.meta' % model_name)
+    save_time_metagraph = 0  
+    if not os.path.exists(metagraph_filename):
+        print('Saving metagraph')
+        start_time = time.time()
+        saver.export_meta_graph(metagraph_filename)
+        save_time_metagraph = time.time() - start_time
+        print('Metagraph saved in %.2f seconds' % save_time_metagraph)
+    summary = tf.Summary()
+    #pylint: disable=maybe-no-member
+    summary.value.add(tag='time/save_variables', simple_value=save_time_variables)
+    summary.value.add(tag='time/save_metagraph', simple_value=save_time_metagraph)
+    summary_writer.add_summary(summary, step)
+  
 def train(total_loss, global_step, optimizer, learning_rate, moving_average_decay, update_gradient_vars, log_histograms=True):
     # Generate moving averages of all losses and associated summaries.
     loss_averages_op = _add_loss_summaries(total_loss)
@@ -329,7 +351,8 @@ def main():
                 weights_initializer=tf.truncated_normal_initializer(stddev=0.1), 
                 weights_regularizer=slim.l2_regularizer(weight_decay),
                 scope='Logits', reuse=False)
-        logits=tf.identity(logits,'logits')
+#         logits=tf.identity(logits,'logits')
+        finallogits = tf.nn.l2_normalize(logits, 1, 1e-10, name='finallogits')
         
         # Norm for the prelogits
         learning_rate = tf.train.exponential_decay(learning_rate_placeholder, global_step,
@@ -405,6 +428,7 @@ def main():
                     prelogits, random_rotate, random_crop, random_flip, prelogits_norm, prelogits_hist_max, use_fixed_image_standardization)
                 stat['time_train'][epoch-1] = time.time() - t
                 
+                save_variables_and_metagraph(sess, saver, summary_writer, model_dir, subdir, epoch)
                 if not cont:
                     break
 
