@@ -8,15 +8,19 @@ from tensorflow.python.ops import data_flow_ops
 from scipy import misc
 import numpy as np
 from os.path import join
+import csv
+import argparse
+import sys
+import copy
+# import pdb
 
 image_size_str='160,160'
-model='/home/nemo/models/kaggle/20190117-170215'
+model='/home/nemo/models/kaggle/20190117-174225'
 path_dir='/home/nemo/kaggle/data/train_160'
-test_dir='home/nemo/kaggle/data/test'
+test_dir='/home/nemo/kaggle/data/test_160/'
 use_flipped_images=False
 use_fixed_image_standardization=False
-batch_size=90
-submit=False
+# batch_size=100
 
 class ImageClass():
     "Stores the paths to images for a given class"
@@ -143,14 +147,17 @@ def get_image_paths_and_labels_for_eval(dataset):
     image_paths_flat = []
     labels_flat = []
     for i in range(len(dataset)):
-        image_paths_flat += dataset[i].image_paths[0]
+        image_paths_flat.append(dataset[i].image_paths[0])
         labels_flat += [i]
     return image_paths_flat, labels_flat
     
 
-def main():
+def main(args):
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    batch_size=100
+    if args.submit:
+        batch_size=40
     with tf.Graph().as_default():
         with tf.Session() as sess:
             image_paths_placeholder = tf.placeholder(tf.string, shape=(None,1), name='image_paths')
@@ -179,16 +186,20 @@ def main():
             coord = tf.train.Coordinator()
             tf.train.start_queue_runners(coord=coord, sess=sess)
             
-            dataset=get_data_set(path_dir)
-            image_paths, labels=get_image_paths_and_labels_for_eval(dataset)
+            if args.submit:
+                image_paths=[test_dir+name for name in os.listdir(test_dir)]
+                image_paths.sort()
+            else:
+                dataset=get_data_set(path_dir)
+                image_paths, _=get_image_paths_and_labels_for_eval(dataset)
 
-            evaluate(sess, enqueue_op, image_paths_placeholder, labels_placeholder, phase_train_placeholder, batch_size_placeholder, control_placeholder,
-        logits, label_batch, image_paths, batch_size, use_flipped_images, use_fixed_image_standardization,labels)
+            evaluate(args, sess, enqueue_op, image_paths_placeholder, labels_placeholder, phase_train_placeholder, batch_size_placeholder, control_placeholder,
+        logits, label_batch, image_paths, batch_size, use_flipped_images, use_fixed_image_standardization)
                 
-def evaluate(sess, enqueue_op, image_paths_placeholder, labels_placeholder, phase_train_placeholder, batch_size_placeholder, control_placeholder,
-        logits, label_batch, image_paths, batch_size, use_flipped_images, use_fixed_image_standardization,labels):
+def evaluate(args, sess, enqueue_op, image_paths_placeholder, labels_placeholder, phase_train_placeholder, batch_size_placeholder, control_placeholder,
+        logits, label_batch, image_paths, batch_size, use_flipped_images, use_fixed_image_standardization):
 
-    nrof_embeddings = len(logits)
+    nrof_embeddings = len(image_paths)
     nrof_flips = 2 if use_flipped_images else 1
     nrof_images = nrof_embeddings * nrof_flips
     labels_array = np.expand_dims(np.arange(0,nrof_images),1)
@@ -198,13 +209,16 @@ def evaluate(sess, enqueue_op, image_paths_placeholder, labels_placeholder, phas
         control_array += np.ones_like(labels_array)*FIXED_STANDARDIZATION
     if use_flipped_images:
         control_array += (labels_array % 2)*FLIP
-        
+
     sess.run(enqueue_op, {image_paths_placeholder: image_paths_array, labels_placeholder: labels_array, control_placeholder: control_array})
     
     logits_size = int(logits.get_shape()[1])
     nrof_batches = nrof_images // batch_size
+#     if nrof_images % batch_size != 0:
+#         nrof_batches=nrof_batches+1
     emb_array = np.zeros((nrof_images, logits_size))
     lab_array = np.zeros((nrof_images,))
+#     pdb.set_trace()
     for i in range(nrof_batches):
         feed_dict = {phase_train_placeholder:False, batch_size_placeholder:batch_size}
         emb, lab = sess.run([logits, label_batch], feed_dict=feed_dict)
@@ -219,21 +233,51 @@ def evaluate(sess, enqueue_op, image_paths_placeholder, labels_placeholder, phas
     else:
         logits1 = emb_array
 
-    assert np.array_equal(lab_array, np.arange(nrof_images))==True
+#     assert np.array_equal(lab_array, np.arange(nrof_images))==True
     
     dataset=get_data_set(path_dir)
     class_dict=get_class_dict(dataset)
     count=0
+    if args.submit:
+        with open('/home/nemo/kaggle/submission.csv','w') as f:
+            writer = csv.writer(f,dialect='excel')
+            writer.writerow(['Image','Id'])
+            for i in range(nrof_embeddings):
+                logit=logits1[i]
+                predict_class=np.argmax(logit)
+                predict_class_name=class_dict.get(predict_class)
+                image_name=os.path.basename(image_paths[i])
+                
+                print "class=%s,predict_class=%s, class_name=%s, predict_class_name=%s" %(i, predict_class, image_name,predict_class_name)
+                logit_copy=copy.deepcopy(logit)
+                logit_copy.sort()
+                top_indexes=[np.argwhere(logit==value)[0][0] for value in logit_copy[::-1][:4]]
+                top_classes=[class_dict.get(index) for index in top_indexes]
+                print "predict_classes=%s    predict_class_name=%s" %(top_indexes, ' '.join(top_classes))
+                
+                writer.writerow([image_name,' '.join(top_classes)])
+        return
     for i in range(nrof_embeddings):
-        logit=logits[i]
+        logit=logits1[i]
         predict_class=np.argmax(logit)
-        predict_class_name=class_dict.get(i)
-        print "class=%s,predict_class=%s, class_name=%s, predict_class_name=%s" %(i, predict_class, os.path.basename(image_paths[i]),predict_class_name)
+        predict_class_name=class_dict.get(predict_class)
+        if args.submit:
+            print "class=%s,predict_class=%s, class_name=%s, predict_class_name=%s" %(i, predict_class, os.path.basename(image_paths[i]),predict_class_name)
+        else:
+            print "class=%s,predict_class=%s, class_name=%s, predict_class_name=%s" %(i, predict_class, os.path.basename(os.path.dirname(image_paths[i])),predict_class_name)
         if i == predict_class:
             count=count+1
-            
     print "count=%d, accuracy=%f" %(count, count/nrof_embeddings)
+        
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--submit', type=bool,
+                        help='Submit kaggle', default=False)
+    parser.add_argument('--model_dir', type=str,
+                        help='model_dir', default='/home/nemo/models/kaggle/20190117-174225')
+    return parser.parse_args(argv)
 
-main()
+if __name__ == '__main__':
+    main(parse_arguments(sys.argv[1:]))
     
     
