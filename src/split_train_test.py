@@ -1,8 +1,8 @@
 import os
 import shutil
-src_dir='/home/nemo/kaggle/data/train_160/'
-train_dir='/home/nemo/kaggle/data/train_160_train/'
-test_dir='/home/nemo/kaggle/data/train_160_test/'
+src_dir='/home/nemo/kaggle/data/clean_train_384/'
+train_dir='/home/nemo/kaggle/data/clean_train_384_train/'
+test_dir='/home/nemo/kaggle/data/clean_train_384_test/'
 threshold=5
 
 for dir_name in os.listdir(src_dir):
@@ -16,10 +16,10 @@ for dir_name in os.listdir(src_dir):
         if not os.path.exists(test_sub_dir):
             os.makedirs(test_sub_dir)
         test_file=files[0]
-        shutil.copyfile(os.path.join(sub_dir_path,test_file),test_sub_dir)
+        shutil.copyfile(os.path.join(sub_dir_path,test_file),os.path.join(test_sub_dir,test_file))
         for i in range(1,len(files)):
-            shutil.copyfile(os.path.join(sub_dir_path,files[i]), train_sub_dir)
+            shutil.copyfile(os.path.join(sub_dir_path,files[i]), os.path.join(train_sub_dir,files[i]))
     else:
         for i in range(0, len(files)):
-            shutil.copyfile(os.path.join(sub_dir_path,files[i]), train_sub_dir)
+            shutil.copyfile(os.path.join(sub_dir_path,files[i]), os.path.join(train_sub_dir,files[i]))
 

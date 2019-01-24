@@ -2,9 +2,9 @@ import os
 from os.path import join
 import shutil
 
-train_image_path='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/train/'
+train_image_path='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/clean_train/'
 train_csv='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/train.csv'
-train_base_dir="/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/train_new/"
+train_base_dir="/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/clean_train_classed/"
 
 
 def get_train_pair_dict():
