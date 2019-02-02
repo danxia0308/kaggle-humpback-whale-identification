@@ -17,20 +17,26 @@ import math
 import time
 import sys
 import argparse
-# import pdb
+from skimage import transform
+import pdb
+from PIL import Image, ImageEnhance
+from keras.preprocessing.image import img_to_array
+from pandas import read_csv
+from scipy.ndimage import affine_transform
+
 
 model_def='models.inception_resnet_v1'
 logs_base_dir = '/home/nemo/logs/kaggle'
 models_base_dir = '/home/nemo/models/kaggle'
-# data_dir='/home/nemo/kaggle/data/train_384_train/'
-# test_dir='/home/nemo/kaggle/data/train_384_test/'
+train_csv_path='/home/nemo/kaggle/data/train.csv'
+test_image_name_file='/home/nemo/kaggle/data/test_list.txt'
 
 # batch_size=90
 test_batch_size=62
 epoch_size=1000
+random_shear_zoom=True
 random_rotate=True
-random_crop=False
-# image_size=384
+random_crop=True
 random_flip=True
 keep_probability=0.6
 embedding_size=512
@@ -39,10 +45,55 @@ learning_rate_decay_epochs=100
 learning_rate_schedule_file='data/learning_rate_schedule_classifier_vggface2.txt'
 optimizer='ADAGRAD'
 gpu_memory_fraction=0.9
-max_nrof_epochs=300
+max_nrof_epochs=600
 prelogits_hist_max=10.0
 use_fixed_image_standardization=True
 use_flipped_images=False
+
+ignore_new_whale=True
+
+new_whale_name='new_whale'
+
+
+image_name_2_class_name=dict([(y,z) for x,y,z in read_csv(train_csv_path).to_records()])
+new_whale_name='new_whale'
+def get_image_name_list(file_path):
+    with open(file_path) as f:
+        whales = f.read().split(" ")
+        if ignore_new_whale:
+            clean_whale=[]
+            for whale in whales:
+                if image_name_2_class_name[whale]!=new_whale_name:
+                    clean_whale.append(whale)
+            return clean_whale
+        else:
+            return whales
+
+test_image_name_list=get_image_name_list(test_image_name_file)
+
+def get_class_name_2_image_names(forAll=False):
+    class_name_2_image_names={}
+    for image_name in image_name_2_class_name.keys():
+        class_name=image_name_2_class_name.get(image_name)
+        if class_name==new_whale_name:
+            continue
+        if image_name in test_image_name_list:
+            if not forAll:
+                continue
+        if class_name not in class_name_2_image_names:
+            image_names=[]
+        else:
+            image_names=class_name_2_image_names.get(class_name)
+        if image_name not in image_names:
+            image_names.append(image_name)
+        class_name_2_image_names[class_name]=image_names
+    return class_name_2_image_names
+
+class_name_2_image_names_train=get_class_name_2_image_names(False)
+class_name_2_image_names_all=get_class_name_2_image_names(True)
+
+
+
 
 
 class ImageClass():
@@ -57,14 +108,39 @@ class ImageClass():
     def __len__(self):
         return len(self.image_paths)
 
-def get_data_set(path_dir):
+def get_data_set_train(path_dir, iggore_single_image, useAll=False):
+    if useAll:
+        class_name_2_image_names=class_name_2_image_names_all
+    else:
+        class_name_2_image_names=class_name_2_image_names_train
+    classes = class_name_2_image_names.keys()
+    classes.sort()
+    class_num = len(classes)
+    dataset=[]
+    for i in range(class_num):
+        class_name=classes[i]
+        if ignore_new_whale and class_name==new_whale_name:
+            continue
+        image_paths=[join(path_dir,img) for img in class_name_2_image_names.get(class_name)]
+        if iggore_single_image:
+            if len(image_paths)==1:
+                continue
+        dataset.append(ImageClass(class_name, image_paths))
+    return dataset
+
+def get_data_set(path_dir, iggore_single_image):
     classes = os.listdir(path_dir)
     classes.sort()
     class_num = len(classes)
     dataset=[]
     for i in range(class_num):
         class_name=classes[i]
+        if ignore_new_whale and class_name==new_whale_name:
+            continue
         image_paths=[join(path_dir,class_name,img) for img in os.listdir(join(path_dir,class_name))]
+        if iggore_single_image:
+            if len(image_paths)==1:
+                continue
         dataset.append(ImageClass(class_name, image_paths))
     return dataset
 
@@ -188,43 +264,25 @@ RANDOM_FLIP = 4
 FIXED_STANDARDIZATION = 8
 FLIP = 16
                
-def do_train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueue_op, image_paths_placeholder, labels_placeholder, 
-      learning_rate_placeholder, phase_train_placeholder, batch_size_placeholder, control_placeholder, step, 
-      loss, train_op, summary_op, summary_writer, reg_losses, learning_rate_schedule_file, 
-      cross_entropy_mean, accuracy, 
-      learning_rate, prelogits, random_rotate, random_crop, random_flip, prelogits_norm, prelogits_hist_max, use_fixed_image_standardization):
+def do_train(args, sess, epoch, learning_rate_placeholder, phase_train_placeholder, batch_size_placeholder, step, 
+      loss, train_op, summary_op, summary_writer, reg_losses, learning_rate_schedule_file, cross_entropy_mean, accuracy, learning_rate):
     batch_number = 0
-    
-#     if learning_rate>0.0:
-#         lr = learning_rate
-#     else:
+#     pdb.set_trace()
     lr = get_learning_rate_from_file(learning_rate_schedule_file, epoch)
         
     if lr<=0:
         return False 
 
-    index_epoch = sess.run(index_dequeue_op)
-    label_epoch = np.array(label_list)[index_epoch]
-    image_epoch = np.array(image_list)[index_epoch]
-    
-    # Enqueue one epoch of image paths and labels
-    labels_array = np.expand_dims(np.array(label_epoch),1)
-    image_paths_array = np.expand_dims(np.array(image_epoch),1)
-    control_value = RANDOM_ROTATE * random_rotate + RANDOM_CROP * random_crop + RANDOM_FLIP * random_flip + FIXED_STANDARDIZATION * use_fixed_image_standardization
-    control_array = np.ones_like(labels_array) * control_value
-    sess.run(enqueue_op, {image_paths_placeholder: image_paths_array, labels_placeholder: labels_array, control_placeholder: control_array})
-
-    # Training loop
     train_time = 0
     while batch_number < epoch_size:
         start_time = time.time()
         feed_dict = {learning_rate_placeholder: lr, phase_train_placeholder:True, batch_size_placeholder:args.batch_size}
-        tensor_list = [loss, train_op, step, reg_losses, prelogits, cross_entropy_mean, learning_rate, prelogits_norm, accuracy]
+        tensor_list = [loss, train_op, step, reg_losses, cross_entropy_mean, learning_rate, accuracy]
         if batch_number % 100 == 0:
-            loss_, _, step_, reg_losses_, prelogits_, cross_entropy_mean_, lr_, prelogits_norm_, accuracy_, summary_str = sess.run(tensor_list + [summary_op], feed_dict=feed_dict)
+            loss_, _, step_, reg_losses_, cross_entropy_mean_, lr_, accuracy_, summary_str = sess.run(tensor_list + [summary_op], feed_dict=feed_dict)
             summary_writer.add_summary(summary_str, global_step=step_)
         else:
-            loss_, _, step_, reg_losses_, prelogits_, cross_entropy_mean_, lr_, prelogits_norm_, accuracy_ = sess.run(tensor_list, feed_dict=feed_dict)
+            loss_, _, step_, reg_losses_, cross_entropy_mean_, lr_, accuracy_ = sess.run(tensor_list, feed_dict=feed_dict)
          
         duration = time.time() - start_time
         print('Epoch: [%d][%d/%d]\tTime %.3f\tLoss %2.3f\tXent %2.3f\tRegLoss %2.3f\tAccuracy %2.3f\tLr %2.5f' %
@@ -233,31 +291,10 @@ def do_train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueu
         train_time += duration
     # Add validation loss and accuracy to summary
     summary = tf.Summary()
-    #pylint: disable=maybe-no-member
     summary.value.add(tag='time/total', simple_value=train_time)
     summary_writer.add_summary(summary, global_step=step_)
     return True
 
-# def evaluate(logits, labels, step, summary_writer, stat, epoch):
-#     
-#     print('Runnning forward pass on Validate images')
-#     nrof_logits=int[logits.get_shape()[0]]
-#     count=0
-#     for i in range(nrof_logits):
-#         emb=logits[i]
-#         index = emb.index(max(emb))
-#         if (index == labels[i]):
-#             count=count+1
-#     accuracy=count*100/nrof_logits
-#             
-#     print('Accuracy: %2.5f' % (accuracy))
-#     
-#     summary = tf.Summary()
-#     #pylint: disable=maybe-no-member
-#     summary.value.add(tag='lfw/accuracy', accuracy)
-#     summary_writer.add_summary(summary, step)
-#     
-#     stat['lfw_accuracy'][epoch-1] = accuracy
 def get_class_dict(dataset):
     dict={}
     for i, data in enumerate(dataset):
@@ -327,7 +364,79 @@ def to_rgb(img):
     w, h = img.shape
     ret = np.empty((w, h, 3), dtype=np.uint8)
     ret[:, :, 0] = ret[:, :, 1] = ret[:, :, 2] = img
-    return ret       
+    return ret  
+
+def rotate_and_adjcolor(img):     
+    angle=np.random.uniform(low=-10.0, high=10.0)
+    ro_img = transform.rotate(img,angle)
+    return ro_img
+#     alpha=np.random.uniform(0.5,1.5)
+#     beta=0
+#     img2 = np.add(np.multiply(ro_img, alpha),beta)
+#     img2 = np.where(img2 >255,255,img2)
+#     img2 = np.where(img2 < 0, 0,img2)
+#     return img2
+
+def rotate(img):
+    angle=np.random.uniform(low=-1.0, high=1.0)
+    ro_img = transform.rotate(img,angle)
+    return ro_img
+
+def rotate_shear_zoom(img):
+    rotate=np.random.uniform(-5, 5)
+    shear=np.random.uniform(-5, 5)
+    height_zoom=np.random.uniform(0.8, 1.0)
+    width_zoom=np.random.uniform(0.8, 1.0)
+    rotate_rad=np.deg2rad(rotate)
+    shear_rad=np.deg2rad(shear)
+    
+    trans_rotate=np.array([[np.cos(rotate_rad),np.sin(rotate_rad),0],[-np.sin(rotate_rad),np.cos(rotate_rad),0],[0,0,1]])
+    trans_shear=np.array([[1,np.sin(shear_rad),0],[0,np.cos(shear_rad),0],[0,0,1]])
+    trans_zoom=np.array([[1.0/height_zoom,0,0],[0,1.0/width_zoom,0],[0,0,1]])
+    
+    trans=np.dot(np.dot(trans_rotate,trans_shear),trans_zoom)
+    matrix=trans[:2,:2]
+    offset=trans[:2,2]
+    
+    img1=affine_transform(img[:,:,0], matrix, offset,order=1, mode='constant', cval=np.average(img))
+    img2=affine_transform(img[:,:,1], matrix, offset,order=1, mode='constant', cval=np.average(img))
+    img3=affine_transform(img[:,:,2], matrix, offset,order=1, mode='constant', cval=np.average(img))
+    img=np.stack([img1,img2,img3],axis=2)
+    
+    return img
+
+def adj_color(img_arr):
+    image = Image.fromarray(img_arr.astype('uint8')).convert('RGB')
+    color_factor=np.random.uniform(0,2)
+    color_image=ImageEnhance.Color(image).enhance(color_factor)
+    brightness_factor=np.random.uniform(0.6,1.4)
+    brightness_image=ImageEnhance.Brightness(color_image).enhance(brightness_factor)
+    contrast_factor=np.random.uniform(1.0,2.1)
+    contrast_image=ImageEnhance.Contrast(brightness_image).enhance(contrast_factor)
+    sharpness_factor=np.random.uniform(0,3.1)
+    sharpness_image=ImageEnhance.Sharpness(contrast_image).enhance(sharpness_factor)
+    return img_to_array(sharpness_image)
+
+def preprocess_function(image_path, label, args):
+#     pdb.set_trace()
+    file_contents = tf.read_file(image_path)
+    img = tf.image.decode_image(file_contents, channels=3)
+#     img = tf.cast(img, dtype=tf.float32)
+    if random_flip:
+        img = tf.image.random_flip_left_right(img)
+    if random_crop:
+        img = tf.random_crop(img, [args.image_size, args.image_size, 3])
+    else:
+        img = tf.image.resize_image_with_crop_or_pad(img, args.image_size, args.image_size)
+#     if adjust_color:
+#         img = tf.py_func(adj_color,[img],tf.float32)
+    if random_shear_zoom:
+        img = tf.py_func(rotate_shear_zoom,[img],tf.float64)
+    img.set_shape((args.image_size,args.image_size, 3))
+    img = tf.image.per_image_standardization(img)
+#     img = (tf.cast(img, tf.float32) - 127.5)/128.0
+    
+    return img, label
 
 def main(args):
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -344,10 +453,9 @@ def main(args):
     if not os.path.isdir(model_dir): 
         os.makedirs(model_dir)
 
-    train_set = get_data_set(args.data_dir)  
-    test_set = get_data_set(args.test_dir)
+    train_set = get_data_set_train(args.data_dir,False,args.use_all)  
+#     test_set = get_data_set(args.test_dir,False)
     class_num = len(train_set) 
-    image_size=args.image_size
     
     pretrained_model = None
     if args.pretrained_model:
@@ -355,75 +463,39 @@ def main(args):
         print('Pre-trained model: %s' % pretrained_model)
     
     with tf.Graph().as_default():
+#         pdb.set_trace()
         global_step = tf.Variable(0, trainable=False)
         image_list, label_list = get_image_paths_and_labels(train_set)
-        image_list_eval, label_list_eval = get_image_paths_and_labels_for_evaluate(test_set)
-        labels = ops.convert_to_tensor(label_list, dtype=tf.int32)
-        range_size = array_ops.shape(labels)[0]
-        index_queue = tf.train.range_input_producer(range_size, num_epochs=None,
-                             shuffle=True, seed=None, capacity=32)
-        index_dequeue_op = index_queue.dequeue_many(args.batch_size*epoch_size, 'index_dequeue')
+        images_path_tensor = tf.convert_to_tensor(image_list)
+        labels_tensor = tf.convert_to_tensor(label_list, dtype=tf.int32)
+        dataset = tf.data.Dataset.from_tensor_slices((images_path_tensor, labels_tensor)).shuffle(len(image_list))
+        dataset = dataset.map(lambda image_path, label: preprocess_function(image_path, label,args)) 
+        dataset = dataset.batch(args.batch_size) 
+        iterator = dataset.make_initializable_iterator() 
+        dataset.repeat()
+        images, labels = iterator.get_next()
+        
+        images = tf.identity(images, 'image_batch')
+        images = tf.identity(images, 'input')
+        labels = tf.identity(labels, 'label_batch')
+        
         learning_rate_placeholder = tf.placeholder(tf.float32, name='learning_rate')
         batch_size_placeholder = tf.placeholder(tf.int32, name='batch_size')
         phase_train_placeholder = tf.placeholder(tf.bool, name='phase_train')
-        image_paths_placeholder = tf.placeholder(tf.string, shape=(None,1), name='image_paths')
-        labels_placeholder = tf.placeholder(tf.int64, shape=(None,1), name='labels')
-        control_placeholder = tf.placeholder(tf.int32, shape=(None,1), name='control')
-        input_queue = data_flow_ops.FIFOQueue(capacity=100000,
-                                    dtypes=[tf.string, tf.int64],
-                                    shapes=[(1,), (1,)],
-                                    shared_name=None, name=None)
-        enqueue_op = input_queue.enqueue_many([image_paths_placeholder, labels_placeholder, control_placeholder], name='enqueue_op')
-        
-        nrof_preprocess_threads = 4
-        images_and_labels = []
-        for _ in range(nrof_preprocess_threads):
-            filenames, label = input_queue.dequeue()
-            images = []
-            for filename in tf.unstack(filenames):
-                file_contents = tf.read_file(filename)
-                image = tf.image.decode_image(file_contents, channels=3)
-                if image.shape[0]==2:
-                    image=to_rgb(image)
-                if random_rotate:
-                    angle = np.random.uniform(low=-10.0, high=10.0)
-                    print ("image.shape",image.shape)
-                    image = misc.imrotate([image], angle, 'bicubic')
-                if random_crop:
-                    image = tf.random_crop(image, [image_size, image_size, 3])
-                else:
-                    image = tf.image.resize_image_with_crop_or_pad(image, image_size, image_size)
-                if random_flip:
-                    image = tf.image.random_flip_left_right(image)
-                image.set_shape((image_size, image_size, 3))
-                images.append(tf.image.per_image_standardization(image))
-            images_and_labels.append([images, label])
-    
-        image_batch, label_batch = tf.train.batch_join(
-            images_and_labels, batch_size=batch_size_placeholder, 
-            shapes=[(image_size, image_size, 3), ()], enqueue_many=True,
-            capacity=4 * nrof_preprocess_threads * args.batch_size,
-            allow_smaller_final_batch=True)
-        image_batch = tf.identity(image_batch, 'image_batch')
-        image_batch = tf.identity(image_batch, 'input')
-        label_batch = tf.identity(label_batch, 'label_batch')
         
         print('Total number of classes: %d' % class_num)
         print('Total number of examples: %d' % len(image_list))
-        
         print('Building training graph')
         
         # Build the inference graph
-        prelogits, _ = network.inference(image_batch, keep_probability, 
+        prelogits, _ = network.inference(images, keep_probability, 
             phase_train=phase_train_placeholder, bottleneck_layer_size=embedding_size, 
             weight_decay=weight_decay)
         logits = slim.fully_connected(prelogits, len(train_set), activation_fn=None, 
                 weights_initializer=tf.truncated_normal_initializer(stddev=0.1), 
                 weights_regularizer=slim.l2_regularizer(weight_decay),
                 scope='Logits', reuse=False)
-#         logits=tf.identity(logits,'logits')
         embeddings = tf.nn.l2_normalize(prelogits, 1, 1e-10, name='embeddings')
-        finallogits = tf.identity(logits, name='finallogits')
         
         # Norm for the prelogits
         learning_rate = tf.train.exponential_decay(learning_rate_placeholder, global_step,
@@ -432,11 +504,11 @@ def main(args):
 
         # Calculate the average cross entropy loss across the batch
         cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=label_batch, logits=logits, name='cross_entropy_per_example')
+            labels=labels, logits=logits, name='cross_entropy_per_example')
         cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
         tf.add_to_collection('losses', cross_entropy_mean)
         
-        correct_prediction = tf.cast(tf.equal(tf.argmax(logits, 1), tf.cast(label_batch, tf.int64)), tf.float32)
+        correct_prediction = tf.cast(tf.equal(tf.argmax(logits, 1), tf.cast(labels, tf.int64)), tf.float32)
         accuracy = tf.reduce_mean(correct_prediction)
         
         eps = 1e-4
@@ -451,7 +523,7 @@ def main(args):
             learning_rate, 0.9999, tf.global_variables(), True)
         
         # Create a saver
-        saver = tf.train.Saver(tf.trainable_variables(), max_to_keep=200)
+        saver = tf.train.Saver(tf.trainable_variables(), max_to_keep=10)
 
         # Build the summary operation based on the TF collection of Summaries.
         summary_op = tf.summary.merge_all()
@@ -462,8 +534,6 @@ def main(args):
         sess.run(tf.global_variables_initializer())
         sess.run(tf.local_variables_initializer())
         summary_writer = tf.summary.FileWriter(log_dir, sess.graph)
-        coord = tf.train.Coordinator()
-        tf.train.start_queue_runners(coord=coord, sess=sess)
 
         with sess.as_default():
             if pretrained_model:
@@ -471,36 +541,38 @@ def main(args):
                 saver.restore(sess, pretrained_model)
             # Training and validation loop
             print('Running training')
+            sess.run(iterator.initializer)
             for epoch in range(1,max_nrof_epochs+1):
-                step = sess.run(global_step, feed_dict=None)
-                cont = do_train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueue_op, image_paths_placeholder, labels_placeholder,
-                    learning_rate_placeholder, phase_train_placeholder, batch_size_placeholder, control_placeholder, global_step, 
-                    total_loss, train_op, summary_op, summary_writer, regularization_losses, learning_rate_schedule_file,
-                    cross_entropy_mean, accuracy, learning_rate,
-                    prelogits, random_rotate, random_crop, random_flip, prelogits_norm, prelogits_hist_max, use_fixed_image_standardization)
-                
+#                 step = sess.run(global_step, feed_dict=None)
+                try:
+                    cont = do_train(args, sess, epoch, learning_rate_placeholder, phase_train_placeholder, batch_size_placeholder, global_step, 
+                        total_loss, train_op, summary_op, summary_writer, regularization_losses, learning_rate_schedule_file,
+                        cross_entropy_mean, accuracy, learning_rate)
+                    if not cont:
+                        break
+                except tf.errors.OutOfRangeError:
+                    print ('Out of range.')
+                    sess.run(iterator.initializer)
                 save_variables_and_metagraph(sess, saver, summary_writer, model_dir, subdir, epoch)
-                if not cont:
-                    break
                 
-#                 evaluate(sess, enqueue_op, image_paths_placeholder, labels_placeholder, phase_train_placeholder, batch_size_placeholder, control_placeholder, 
-#         logits, label_batch, image_list_eval, label_list_eval, test_batch_size,  step, summary_writer, use_flipped_images, use_fixed_image_standardization, train_set)
-
-
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('--image_size', type=int,
-                        help='Image Size', default=160)
+                        help='Image Size', default=384)
     parser.add_argument('--data_dir', type=str,
-                        help='data dir', default='/home/nemo/kaggle/data/clean_train_160_train/')
-    parser.add_argument('--test_dir', type=str,
-                        help='test dir', default='/home/nemo/kaggle/data/clean_train_160_test/')
+                        help='data dir', default='/home/nemo/kaggle/data/clean_train_422/')
+#     parser.add_argument('--test_dir', type=str,
+#                         help='test dir', default='/home/nemo/kaggle/data/clean_train_160_test/')
     parser.add_argument('--gpu_num', type=str,
                         help='select which gpu', default='0')
     parser.add_argument('--batch_size', type=int,
                         help='batch size', default=90)
+    parser.add_argument('--use_all', type=bool,
+                        help='use all', default=False)
     parser.add_argument('--pretrained_model', type=str,
         help='Load a pretrained model before training starts.')
+    parser.add_argument('--lr_file', type=str,
+        help='Load a pretrained model before training starts.',default='data/learning_rate_schedule_classifier_vggface2.txt')
 
     
     return parser.parse_args(argv)

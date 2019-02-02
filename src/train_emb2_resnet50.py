@@ -17,18 +17,19 @@ import math
 import time
 import sys
 import argparse
-# import pdb
+from skimage import transform
+import pdb
 
-model_def='models.inception_resnet_v1'
+model_def='models.resnet_v3'
 logs_base_dir = '/home/nemo/logs/kaggle'
 models_base_dir = '/home/nemo/models/kaggle'
-# data_dir='/home/nemo/kaggle/data/train_384_train/'
-# test_dir='/home/nemo/kaggle/data/train_384_test/'
+
+
 
 # batch_size=90
 test_batch_size=62
 epoch_size=1000
-random_rotate=True
+random_rotate=False
 random_crop=False
 # image_size=384
 random_flip=True
@@ -44,6 +45,44 @@ prelogits_hist_max=10.0
 use_fixed_image_standardization=True
 use_flipped_images=False
 
+ignore_new_whale=True
+
+new_whale_name='new_whale'
+
+def arcLogits(embeddings, label_batch, nrof_classes, args): 
+    print("label_batch %s"%label_batch)
+    nembeddings = embeddings * args.margin_s 
+    weight = tf.get_variable('fc_weight', shape = [embedding_size, nrof_classes], regularizer = slim.l2_regularizer(args.weight_decay), initializer = tf.contrib.layers.xavier_initializer(uniform=False)) 
+    weight = tf.nn.l2_normalize(weight, 0, 1e-10, name='fc_weight_n') 
+    old_logits = tf.matmul(nembeddings, weight)
+    
+    #label_batch_one_hot = tf.one_hot(label_batch,len(train_set)) 
+    row_indices = tf.cast(tf.range(tf.shape(label_batch)[0]), tf.int64) 
+    full_indices = tf.stack([row_indices, label_batch], axis=1) 
+    zy = tf.gather_nd(old_logits, full_indices) 
+    print("zy %s"%zy)
+    cos_t = zy/args.margin_s 
+    cos_m = math.cos(args.margin_m) 
+    sin_m = math.sin(args.margin_m) 
+    mm = math.sin(math.pi-args.margin_m)*args.margin_m 
+    threshold = math.cos(math.pi-args.margin_m)
+    
+    body = tf.maximum(1e-10,1.0 - cos_t*cos_t)
+    sin_t = tf.sqrt(body)
+    new_zy = cos_t*cos_m 
+    b = sin_t*sin_m 
+    new_zy = new_zy - b 
+    new_zy = new_zy*args.margin_s 
+    zy_keep = zy - args.margin_s*mm
+    new_zy = tf.where(cos_t>threshold, new_zy, zy_keep)
+
+    diff = new_zy - zy
+    diff = tf.expand_dims(diff, 1)
+    gt_one_hot = tf.one_hot(label_batch, depth = nrof_classes, on_value = 1.0, off_value = 0.0)
+    #body = tf.boolean_mask(diff, gt_one_hot)
+    body = diff * gt_one_hot
+    logits = old_logits+body
+    return old_logits, logits
 
 class ImageClass():
     "Stores the paths to images for a given class"
@@ -57,14 +96,19 @@ class ImageClass():
     def __len__(self):
         return len(self.image_paths)
 
-def get_data_set(path_dir):
+def get_data_set(path_dir, iggore_single_image):
     classes = os.listdir(path_dir)
     classes.sort()
     class_num = len(classes)
     dataset=[]
     for i in range(class_num):
         class_name=classes[i]
+        if ignore_new_whale and class_name==new_whale_name:
+            continue
         image_paths=[join(path_dir,class_name,img) for img in os.listdir(join(path_dir,class_name))]
+        if iggore_single_image:
+            if len(image_paths)==1:
+                continue
         dataset.append(ImageClass(class_name, image_paths))
     return dataset
 
@@ -344,8 +388,8 @@ def main(args):
     if not os.path.isdir(model_dir): 
         os.makedirs(model_dir)
 
-    train_set = get_data_set(args.data_dir)  
-    test_set = get_data_set(args.test_dir)
+    train_set = get_data_set(args.data_dir,True)  
+    test_set = get_data_set(args.test_dir,False)
     class_num = len(train_set) 
     image_size=args.image_size
     
@@ -385,14 +429,15 @@ def main(args):
                 image = tf.image.decode_image(file_contents, channels=3)
                 if image.shape[0]==2:
                     image=to_rgb(image)
-                if random_rotate:
-                    angle = np.random.uniform(low=-10.0, high=10.0)
-                    print ("image.shape",image.shape)
-                    image = misc.imrotate([image], angle, 'bicubic')
                 if random_crop:
                     image = tf.random_crop(image, [image_size, image_size, 3])
                 else:
                     image = tf.image.resize_image_with_crop_or_pad(image, image_size, image_size)
+                if random_rotate:
+                    angle = np.random.uniform(low=-10.0, high=10.0)
+#                     print ("image.shape",image.shape)
+#                     image=transform.rotate(image, angle)
+#                     image = misc.imrotate([image], angle, 'bicubic')
                 if random_flip:
                     image = tf.image.random_flip_left_right(image)
                 image.set_shape((image_size, image_size, 3))
@@ -417,13 +462,14 @@ def main(args):
         prelogits, _ = network.inference(image_batch, keep_probability, 
             phase_train=phase_train_placeholder, bottleneck_layer_size=embedding_size, 
             weight_decay=weight_decay)
-        logits = slim.fully_connected(prelogits, len(train_set), activation_fn=None, 
-                weights_initializer=tf.truncated_normal_initializer(stddev=0.1), 
-                weights_regularizer=slim.l2_regularizer(weight_decay),
-                scope='Logits', reuse=False)
-#         logits=tf.identity(logits,'logits')
+#         logits = slim.fully_connected(prelogits, len(train_set), activation_fn=None, 
+#                 weights_initializer=tf.truncated_normal_initializer(stddev=0.1), 
+#                 weights_regularizer=slim.l2_regularizer(weight_decay),
+#                 scope='Logits', reuse=False)
+        
         embeddings = tf.nn.l2_normalize(prelogits, 1, 1e-10, name='embeddings')
-        finallogits = tf.identity(logits, name='finallogits')
+        old_logits, logits = arcLogits(embeddings, label_batch, len(train_set), args)
+        logits=tf.identity(logits,'logits')
         
         # Norm for the prelogits
         learning_rate = tf.train.exponential_decay(learning_rate_placeholder, global_step,
@@ -451,7 +497,7 @@ def main(args):
             learning_rate, 0.9999, tf.global_variables(), True)
         
         # Create a saver
-        saver = tf.train.Saver(tf.trainable_variables(), max_to_keep=200)
+        saver = tf.train.Saver(tf.trainable_variables(), max_to_keep=10)
 
         # Build the summary operation based on the TF collection of Summaries.
         summary_op = tf.summary.merge_all()
@@ -501,7 +547,16 @@ def parse_arguments(argv):
                         help='batch size', default=90)
     parser.add_argument('--pretrained_model', type=str,
         help='Load a pretrained model before training starts.')
-
+    parser.add_argument('--lr_file', type=str,
+        help='Load a pretrained model before training starts.',default='data/learning_rate_schedule_classifier_vggface2.txt')
+    parser.add_argument('--margin_s', type=float,
+        help='Keep only the percentile images closed to its class center', default=64.0)
+    parser.add_argument('--margin_m', type=float,
+        help='Keep only the percentile images closed to its class center', default=0.5)
+    parser.add_argument('--mom', type=float,
+        help='Keep only the percentile images closed to its class center', default=0.9)
+    parser.add_argument('--weight_decay', type=float,
+        help='L2 weight regularization.', default=5e-5)
     
     return parser.parse_args(argv)
 

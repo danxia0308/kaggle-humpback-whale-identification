@@ -229,6 +229,7 @@ def read_cropped_image(p, augment):
 
     # Read the image, transform to black and white and comvert to numpy array
     img = read_raw_image(p).convert('L')
+    img1=img
     img = img_to_array(img)
 
     # Apply affine transformation
@@ -238,6 +239,9 @@ def read_cropped_image(p, augment):
     img = affine_transform(img, matrix, offset, output_shape=img_shape[:-1], order=1, mode='constant',
                            cval=np.average(img))
     img = img.reshape(img_shape)
+    img2=img
+    
+    show_whale([img1,img2])
 
     # Normalize to zero mean and unit variance
     img -= np.mean(img, keepdims=True)

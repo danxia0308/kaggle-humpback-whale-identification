@@ -17,19 +17,24 @@ import math
 import time
 import sys
 import argparse
-# import pdb
+from skimage import transform
+import pdb
+from PIL import Image, ImageEnhance
+from keras.preprocessing.image import img_to_array
+
 
 model_def='models.inception_resnet_v1'
 logs_base_dir = '/home/nemo/logs/kaggle'
 models_base_dir = '/home/nemo/models/kaggle'
-# data_dir='/home/nemo/kaggle/data/train_384_train/'
-# test_dir='/home/nemo/kaggle/data/train_384_test/'
+
+
 
 # batch_size=90
 test_batch_size=62
 epoch_size=1000
 random_rotate=True
-random_crop=False
+random_crop=True
+adjust_color=True
 # image_size=384
 random_flip=True
 keep_probability=0.6
@@ -44,6 +49,10 @@ prelogits_hist_max=10.0
 use_fixed_image_standardization=True
 use_flipped_images=False
 
+ignore_new_whale=True
+
+new_whale_name='new_whale'
+
 
 class ImageClass():
     "Stores the paths to images for a given class"
@@ -57,14 +66,20 @@ class ImageClass():
     def __len__(self):
         return len(self.image_paths)
 
-def get_data_set(path_dir):
+def get_data_set(path_dir, iggore_single_image):
     classes = os.listdir(path_dir)
     classes.sort()
     class_num = len(classes)
     dataset=[]
+    
     for i in range(class_num):
         class_name=classes[i]
+        if ignore_new_whale and class_name==new_whale_name:
+            continue
         image_paths=[join(path_dir,class_name,img) for img in os.listdir(join(path_dir,class_name))]
+        if iggore_single_image:
+            if len(image_paths)==1:
+                continue
         dataset.append(ImageClass(class_name, image_paths))
     return dataset
 
@@ -238,26 +253,6 @@ def do_train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueu
     summary_writer.add_summary(summary, global_step=step_)
     return True
 
-# def evaluate(logits, labels, step, summary_writer, stat, epoch):
-#     
-#     print('Runnning forward pass on Validate images')
-#     nrof_logits=int[logits.get_shape()[0]]
-#     count=0
-#     for i in range(nrof_logits):
-#         emb=logits[i]
-#         index = emb.index(max(emb))
-#         if (index == labels[i]):
-#             count=count+1
-#     accuracy=count*100/nrof_logits
-#             
-#     print('Accuracy: %2.5f' % (accuracy))
-#     
-#     summary = tf.Summary()
-#     #pylint: disable=maybe-no-member
-#     summary.value.add(tag='lfw/accuracy', accuracy)
-#     summary_writer.add_summary(summary, step)
-#     
-#     stat['lfw_accuracy'][epoch-1] = accuracy
 def get_class_dict(dataset):
     dict={}
     for i, data in enumerate(dataset):
@@ -329,6 +324,22 @@ def to_rgb(img):
     ret[:, :, 0] = ret[:, :, 1] = ret[:, :, 2] = img
     return ret       
 
+def rotate(img):
+    angle=np.random.uniform(low=-1.0, high=1.0)
+    return transform.rotate(img,angle)
+
+def adj_color(img_arr):
+    image = Image.fromarray(img_arr.astype('uint8')).convert('RGB')
+    color_factor=np.random.uniform(0,2)
+    color_image=ImageEnhance.Color(image).enhance(color_factor)
+    brightness_factor=np.random.uniform(0.6,1.4)
+    brightness_image=ImageEnhance.Brightness(color_image).enhance(brightness_factor)
+    contrast_factor=np.random.uniform(1.0,2.1)
+    contrast_image=ImageEnhance.Contrast(brightness_image).enhance(contrast_factor)
+    sharpness_factor=np.random.uniform(0,3.1)
+    sharpness_image=ImageEnhance.Sharpness(contrast_image).enhance(sharpness_factor)
+    return img_to_array(sharpness_image)
+
 def main(args):
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_num
@@ -344,8 +355,9 @@ def main(args):
     if not os.path.isdir(model_dir): 
         os.makedirs(model_dir)
 
-    train_set = get_data_set(args.data_dir)  
-    test_set = get_data_set(args.test_dir)
+    train_set = get_data_set(args.data_dir,True)  
+    test_set = get_data_set(args.test_dir,False)
+    
     class_num = len(train_set) 
     image_size=args.image_size
     
@@ -385,14 +397,15 @@ def main(args):
                 image = tf.image.decode_image(file_contents, channels=3)
                 if image.shape[0]==2:
                     image=to_rgb(image)
-                if random_rotate:
-                    angle = np.random.uniform(low=-10.0, high=10.0)
-                    print ("image.shape",image.shape)
-                    image = misc.imrotate([image], angle, 'bicubic')
                 if random_crop:
                     image = tf.random_crop(image, [image_size, image_size, 3])
                 else:
                     image = tf.image.resize_image_with_crop_or_pad(image, image_size, image_size)
+#                 if adjust_color:
+#                     pdb.set_trace()
+#                     image = tf.py_func(adj_color,[image],tf.uint8)
+#                 if random_rotate:
+#                     image = tf.py_func(rotate,[image],tf.uint8)
                 if random_flip:
                     image = tf.image.random_flip_left_right(image)
                 image.set_shape((image_size, image_size, 3))
@@ -451,7 +464,7 @@ def main(args):
             learning_rate, 0.9999, tf.global_variables(), True)
         
         # Create a saver
-        saver = tf.train.Saver(tf.trainable_variables(), max_to_keep=200)
+        saver = tf.train.Saver(tf.trainable_variables(), max_to_keep=10)
 
         # Build the summary operation based on the TF collection of Summaries.
         summary_op = tf.summary.merge_all()
@@ -490,17 +503,19 @@ def main(args):
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('--image_size', type=int,
-                        help='Image Size', default=160)
+                        help='Image Size', default=384)
     parser.add_argument('--data_dir', type=str,
-                        help='data dir', default='/home/nemo/kaggle/data/clean_train_160_train/')
+                        help='data dir', default='/home/nemo/kaggle/data/clean_train_agument_422_train/')
     parser.add_argument('--test_dir', type=str,
-                        help='test dir', default='/home/nemo/kaggle/data/clean_train_160_test/')
+                        help='test dir', default='/home/nemo/kaggle/data/clean_train_agument_422_test/')
     parser.add_argument('--gpu_num', type=str,
                         help='select which gpu', default='0')
     parser.add_argument('--batch_size', type=int,
                         help='batch size', default=90)
     parser.add_argument('--pretrained_model', type=str,
         help='Load a pretrained model before training starts.')
+    parser.add_argument('--lr_file', type=str,
+        help='Load a pretrained model before training starts.',default='data/learning_rate_schedule_classifier_vggface2.txt')
 
     
     return parser.parse_args(argv)
