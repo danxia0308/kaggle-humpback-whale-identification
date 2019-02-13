@@ -6,6 +6,7 @@ from PIL import Image,ImageEnhance
 import numpy as np
 from keras.preprocessing.image import img_to_array
 from tensorflow.python.ops import math_ops
+from scipy.ndimage import affine_transform
 
 
 image_path='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/clean_test/0fcc458b4.jpg'
@@ -52,16 +53,36 @@ def prewhiten(x):
     y = np.multiply(np.subtract(x, mean), 1/std_adj)
     return y  
 
+def rotate_shear_zoom(img):
+    rotate=np.random.uniform(-5, 5)
+    shear=np.random.uniform(-5, 5)
+    height_zoom=np.random.uniform(0.8, 1.0)
+    width_zoom=np.random.uniform(0.8, 1.0)
+    rotate_rad=np.deg2rad(rotate)
+    shear_rad=np.deg2rad(shear)
+    
+    trans_rotate=np.array([[np.cos(rotate_rad),np.sin(rotate_rad),0],[-np.sin(rotate_rad),np.cos(rotate_rad),0],[0,0,1]])
+    trans_shear=np.array([[1,np.sin(shear_rad),0],[0,np.cos(shear_rad),0],[0,0,1]])
+    trans_zoom=np.array([[1.0/height_zoom,0,0],[0,1.0/width_zoom,0],[0,0,1]])
+    
+    trans=np.dot(np.dot(trans_rotate,trans_shear),trans_zoom)
+    matrix=trans[:2,:2]
+    offset=trans[:2,2]
+    
+    img1=affine_transform(img[:,:,0], matrix, offset,order=1, mode='constant', cval=np.average(img))
+    img2=affine_transform(img[:,:,1], matrix, offset,order=1, mode='constant', cval=np.average(img))
+    img3=affine_transform(img[:,:,2], matrix, offset,order=1, mode='constant', cval=np.average(img))
+    img=np.stack([img1,img2,img3],axis=2)
+    
+    return img
+
 with tf.Session() as sess:
     file_contents= sess.run(tf.read_file(image_path))
     print type(file_contents)
     img = sess.run(tf.image.decode_image(file_contents, channels=3))
     print type(img)
     print img.shape
-    
-    op=(tf.cast(img, tf.float32) - 127.5)/128.0
+    img=tf.cast(img,tf.float32)
+    op=tf.py_func(rotate_shear_zoom,[img],tf.float32)
     re = sess.run(op)
-    re2 =np.divide(np.subtract(img, 127.5),128.0)
-    print re
-    print re-re2
     

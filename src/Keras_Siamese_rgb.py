@@ -30,20 +30,21 @@ import time
 import os
 import tensorflow as tf
 import keras.backend.tensorflow_backend as KTF
+from keras.utils import multi_gpu_model
 # import pdb
 
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 #进行配置，每个GPU使用60%上限现存
-# os.environ["CUDA_VISIBLE_DEVICES"]="0,1" # 使用编号为1，2号的GPU
+# os.environ["CUDA_VISIBLE_DEVICES"]="0,1" 
 # config = tf.ConfigProto()
 # config.gpu_options.per_process_gpu_memory_fraction = 0.9 # 每个GPU现存上届控制在60%以内
 # session = tf.Session(config=config)
 # # 设置session
 # KTF.set_session(session)
 print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'set session start')
-KTF.clear_session()
-os.environ["CUDA_VISIBLE_DEVICES"]="1" 
-config=tf.ConfigProto(device_count={'gpu':1,'cpu':1})
+# KTF.clear_session()
+os.environ["CUDA_VISIBLE_DEVICES"]="0,1" 
+config=tf.ConfigProto(device_count={'gpu':2,'cpu':1})
 # config.gpu_options.per_process_gpu_memory_fraction = 0.9
 session=tf.Session(config=config)
 KTF.set_session(session)
@@ -62,7 +63,7 @@ P2H = base_dir+'metadata/p2h.pickle'
 P2SIZE = base_dir+'metadata/p2size.pickle'
 BB_DF = base_dir+'metadata/bounding_boxes.csv'
 model_path=base_dir+'piotte/mpiotte-standard.model'
-model_path='/home/nemo/models/kaggle/standard_copy.model'
+model_path='/home/nemo/models/kaggle/keras_rgb.model'
 tagged = dict([(p, w) for _, p, w in read_csv(TRAIN_DF).to_records()])
 submit = [p for _, p, _ in read_csv(SUB_Df).to_records()]
 join = list(tagged.keys()) + submit
@@ -184,7 +185,7 @@ sys.stderr = open('/dev/null' if platform.system() != 'Windows' else 'nul', 'w')
 
 sys.stderr = old_stderr
 
-img_shape = (384, 384, 1)  # The image shape used by the model
+img_shape = (384, 384, 3)  # The image shape used by the model
 anisotropy = 2.15  # The horizontal compression ratio
 crop_margin = 0.05  # The margin added around the bounding box to compensate for bounding box inaccuracy
 
@@ -201,6 +202,12 @@ def build_transform(rotation, shear, height_zoom, width_zoom, height_shift, widt
     zoom_matrix = np.array([[1.0 / height_zoom, 0, 0], [0, 1.0 / width_zoom, 0], [0, 0, 1]])
     shift_matrix = np.array([[1, 0, -height_shift], [0, 1, -width_shift], [0, 0, 1]])
     return np.dot(np.dot(rotation_matrix, shear_matrix), np.dot(zoom_matrix, shift_matrix))
+
+def to_rgb(img):
+    w, h = img.shape[:2]
+    ret = np.empty((w, h, 3), dtype=np.float64)
+    ret[:, :, 0] = ret[:, :, 1] = ret[:, :, 2] = img[:,:,0]
+    return ret  
 
 def read_cropped_image(p, augment):
     """
@@ -256,16 +263,27 @@ def read_cropped_image(p, augment):
     trans = np.dot(np.array([[1, 0, 0.5 * (y1 + y0)], [0, 1, 0.5 * (x1 + x0)], [0, 0, 1]]), trans)
 
     # Read the image, transform to black and white and comvert to numpy array
-    img = read_raw_image(p).convert('L')
+    img = read_raw_image(p)
     img = img_to_array(img)
 
     # Apply affine transformation
     matrix = trans[:2, :2]
     offset = trans[:2, 2]
-    img = img.reshape(img.shape[:-1])
-    img = affine_transform(img, matrix, offset, output_shape=img_shape[:-1], order=1, mode='constant',
-                           cval=np.average(img))
-    img = img.reshape(img_shape)
+#     pdb.set_trace()
+    if img.shape[2] == 1:
+#         print (p, img.shape)
+        img = to_rgb(img)
+    img0 = img[:,:,0]
+    img1 = img[:,:,1]
+    img2 = img[:,:,2]
+    
+    img0 = affine_transform(img0, matrix, offset, output_shape=img_shape[:-1], order=1, mode='constant',
+                           cval=np.average(img0))
+    img1 = affine_transform(img1, matrix, offset, output_shape=img_shape[:-1], order=1, mode='constant',
+                           cval=np.average(img1))
+    img2 = affine_transform(img2, matrix, offset, output_shape=img_shape[:-1], order=1, mode='constant',
+                           cval=np.average(img2))
+    img = np.stack([img0,img1,img2],2)
     
     # Normalize to zero mean and unit variance
     img -= np.mean(img, keepdims=True)
@@ -506,9 +524,12 @@ class TrainingData(Sequence):
 
 
 # Test on a batch of 32 with random costs.
+print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'test get train data start.')
 score = np.random.random_sample(size=(len(train), len(train)))
 data = TrainingData(score)
 (a, b), c = data[0]
+print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'test get train data end.')
+print ('score len=%s data len=%s' %(score.shape, len(data)))
 
 # A Keras generator to evaluate only the BRANCH MODEL
 class FeatureGen(Sequence):
@@ -647,7 +668,7 @@ def make_steps(step, ampl):
     history['lr'] = get_lr(model)
     print(history['epochs'], history['lr'], history['ms'])
     histories.append(history)
-    keras.models.save_model(model, '/home/nemo/models/kaggle/keras.model')
+    keras.models.save_model(model, '/home/nemo/models/kaggle/keras_rgb.model')
 
 histories = []
 steps = 0
@@ -657,13 +678,6 @@ if isfile(model_path):
     print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'load model:', model_path)
     tmp = keras.models.load_model(model_path)
     model.set_weights(tmp.get_weights())
-#     with open('weights.txt','rb') as f:
-#         try:
-#             weights=pickle.load(f)
-#         except EOFError:
-#             pass
-#     model.set_weights(weights)
-#     model.save('standard_copy.model')
 else:
     pass
 if True:
@@ -675,31 +689,31 @@ if True:
 #         make_steps(5, ampl)
 #         ampl = max(1.0, 100 ** -0.1 * ampl)
     # epoch -> 150
-#     for _ in range(18): make_steps(5, 1.0) #change from 18 to 1
-#     # epoch -> 200
-#     set_lr(model, 16e-5)
-#     for _ in range(10): make_steps(5, 0.5)
-#     # epoch -> 240
-#     set_lr(model, 4e-5)
-#     for _ in range(8): make_steps(5, 0.25)
-#     # epoch -> 250
-#     set_lr(model, 1e-5)
-#     for _ in range(2): make_steps(5, 0.25)
-#     # epoch -> 300
+    for _ in range(4): make_steps(5, 1.0)  #change from 18 to 8
+    # epoch -> 200
+    set_lr(model, 16e-5)
+    for _ in range(10): make_steps(5, 0.5)
+    # epoch -> 240
+    set_lr(model, 4e-5)
+    for _ in range(8): make_steps(5, 0.25)
+    # epoch -> 250
+    set_lr(model, 1e-5)
+    for _ in range(2): make_steps(5, 0.25)
+    # epoch -> 300
     weights = model.get_weights()
     model, branch_model, head_model = build_model(64e-5, 0.0002)
     model.set_weights(weights)
-#     for _ in range(10): make_steps(5, 1.0)
-#     # epoch -> 350
-#     set_lr(model, 16e-5)
-#     for _ in range(10): make_steps(5, 0.5)
-#     # epoch -> 390
-#     set_lr(model, 4e-5)
-#     for _ in range(8): make_steps(5, 0.25)
-#     # epoch -> 400
+    for _ in range(10): make_steps(5, 1.0)
+    # epoch -> 350
+    set_lr(model, 16e-5)
+    for _ in range(10): make_steps(5, 0.5)
+    # epoch -> 390
+    set_lr(model, 4e-5)
+    for _ in range(8): make_steps(5, 0.25)
+    # epoch -> 400
     set_lr(model, 1e-5)
-    for _ in range(10): make_steps(5, 0.25) #change from 2 to 10
-    model.save('standard_copy.model')
+    for _ in range(2): make_steps(5, 0.25)
+    model.save('standard_rgb.model')
 
 model.summary()
 

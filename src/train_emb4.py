@@ -1,4 +1,4 @@
-from __future__ import absolute_import
+# from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
@@ -23,6 +23,7 @@ from PIL import Image, ImageEnhance
 from keras.preprocessing.image import img_to_array
 from pandas import read_csv
 from scipy.ndimage import affine_transform
+import util
 
 
 # model_def='models.inception_resnet_v1'
@@ -377,58 +378,12 @@ def rotate_and_adjcolor(img):
 #     img2 = np.where(img2 < 0, 0,img2)
 #     return img2
 
-def rotate(img):
-    angle=np.random.uniform(low=-1.0, high=1.0)
-    ro_img = transform.rotate(img,angle)
-    return ro_img
-
-def rotate_shear_zoom(img):
-    rotate=np.random.uniform(-5, 5)
-    shear=np.random.uniform(-5, 5)
-    height_zoom=np.random.uniform(0.8, 1.0)
-    width_zoom=np.random.uniform(0.8, 1.0)
-    rotate_rad=np.deg2rad(rotate)
-    shear_rad=np.deg2rad(shear)
-     
-    trans_rotate=np.array([[np.cos(rotate_rad),np.sin(rotate_rad),0],[-np.sin(rotate_rad),np.cos(rotate_rad),0],[0,0,1]])
-    trans_shear=np.array([[1,np.sin(shear_rad),0],[0,np.cos(shear_rad),0],[0,0,1]])
-    trans_zoom=np.array([[1.0/height_zoom,0,0],[0,1.0/width_zoom,0],[0,0,1]])
-     
-    trans=np.dot(np.dot(trans_rotate,trans_shear),trans_zoom)
-    matrix=trans[:2,:2]
-    offset=trans[:2,2]
-    
-    img1=affine_transform(img[:,:,0], matrix, offset,order=1, mode='constant', cval=np.average(img))
-    img2=affine_transform(img[:,:,1], matrix, offset,order=1, mode='constant', cval=np.average(img))
-    img3=affine_transform(img[:,:,2], matrix, offset,order=1, mode='constant', cval=np.average(img))
-    img=np.stack([img1,img2,img3],axis=2)
-    
-    return img
-
-def adj_color(img_arr):
-    image = Image.fromarray(img_arr.astype('uint8')).convert('RGB')
-    color_factor=np.random.uniform(0,2)
-    color_image=ImageEnhance.Color(image).enhance(color_factor)
-    brightness_factor=np.random.uniform(0.6,1.4)
-    brightness_image=ImageEnhance.Brightness(color_image).enhance(brightness_factor)
-    contrast_factor=np.random.uniform(1.0,2.1)
-    contrast_image=ImageEnhance.Contrast(brightness_image).enhance(contrast_factor)
-    sharpness_factor=np.random.uniform(0,3.1)
-    sharpness_image=ImageEnhance.Sharpness(contrast_image).enhance(sharpness_factor)
-    return img_to_array(sharpness_image)
-
 def preprocess_function(image_path, label, args):
     file_contents = tf.read_file(image_path)
     img = tf.image.decode_image(file_contents, channels=3)
-    if random_flip:
-        img = tf.image.random_flip_left_right(img)
-    if random_crop:
-        img = tf.random_crop(img, [args.image_size, args.image_size, 3])
-    else:
-        img = tf.image.resize_image_with_crop_or_pad(img, args.image_size, args.image_size)
-    if random_shear_zoom:
-        img=tf.cast(img,tf.float32)
-        img = tf.py_func(rotate_shear_zoom,[img],tf.float32)
+#     img = tf.image.random_flip_left_right(img)
+    img=tf.cast(img,tf.float32)
+    img = tf.py_func(util.read_cropped_image,[img,image_path],tf.float32)
     img.set_shape((args.image_size,args.image_size, 3))
     img = tf.image.per_image_standardization(img)
 #     img = (tf.cast(img, tf.float32) - 127.5)/128.0
@@ -557,9 +512,7 @@ def parse_arguments(argv):
     parser.add_argument('--image_size', type=int,
                         help='Image Size', default=384)
     parser.add_argument('--data_dir', type=str,
-                        help='data dir', default='/home/nemo/kaggle/data/clean_train_422/')
-#     parser.add_argument('--test_dir', type=str,
-#                         help='test dir', default='/home/nemo/kaggle/data/clean_train_160_test/')
+                        help='data dir', default='/home/nemo/kaggle/data/train/')
     parser.add_argument('--gpu_num', type=str,
                         help='select which gpu', default='0')
     parser.add_argument('--batch_size', type=int,

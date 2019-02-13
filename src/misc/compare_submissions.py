@@ -4,7 +4,7 @@ from os.path import join
 import shutil
 
 base_dir='/Users/chendanxia/sophie/'
-s1=base_dir+'submission_0.673.csv'
+s1=base_dir+'submission_0.822.csv'
 s2=base_dir+'submission.csv'
 test_dir='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/clean_test'
 dst_dir='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/analysis'

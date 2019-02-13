@@ -7,7 +7,7 @@ import sys
 from math import sqrt
 # Determine the size of each image
 from os.path import isfile
-from lapjv import lapjv
+from lap import lapjv
 import keras
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,16 +30,11 @@ import time
 import os
 import tensorflow as tf
 import keras.backend.tensorflow_backend as KTF
+import argparse
 # import pdb
 
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-#进行配置，每个GPU使用60%上限现存
-# os.environ["CUDA_VISIBLE_DEVICES"]="0,1" # 使用编号为1，2号的GPU
-# config = tf.ConfigProto()
-# config.gpu_options.per_process_gpu_memory_fraction = 0.9 # 每个GPU现存上届控制在60%以内
-# session = tf.Session(config=config)
-# # 设置session
-# KTF.set_session(session)
+
 print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'set session start')
 KTF.clear_session()
 os.environ["CUDA_VISIBLE_DEVICES"]="1" 
@@ -49,24 +44,37 @@ session=tf.Session(config=config)
 KTF.set_session(session)
 print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'set session end')
 
+mac=True
 # base_dir='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/'
 # TRAIN = base_dir+'train_backup/'
 # TEST = base_dir+'test_backup/'
 base_dir='/home/nemo/kaggle/data/'
 TRAIN = base_dir+'train/'
 TEST = base_dir+'test/'
+if mac:
+    base_dir='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/'
+    TRAIN = base_dir+'train_backup/'
+    TEST = base_dir+'test_backup/'
 TRAIN_DF = base_dir+'train.csv'
 SUB_Df = base_dir+'sample_submission.csv'
 
 P2H = base_dir+'metadata/p2h.pickle'
 P2SIZE = base_dir+'metadata/p2size.pickle'
 BB_DF = base_dir+'metadata/bounding_boxes.csv'
-model_path=base_dir+'piotte/mpiotte-standard.model'
-model_path='/home/nemo/models/kaggle/standard_copy.model'
 tagged = dict([(p, w) for _, p, w in read_csv(TRAIN_DF).to_records()])
 submit = [p for _, p, _ in read_csv(SUB_Df).to_records()]
 join = list(tagged.keys()) + submit
-batch_size=32
+print('tagged:%s submit:%s join:%s' %(len(tagged),len(submit),len(join)))
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', type=str)
+    return parser.parse_args(argv)
+args=parse_arguments(sys.argv[1:])
+model_path=args.model
+if mac:
+    model_path=base_dir+'piotte/mpiotte-bootstrap.model'
+print ('model_path',model_path)
 
 def expand_path(p):
     if isfile(TRAIN + p):
@@ -431,7 +439,7 @@ for i, t in enumerate(train):
     
 
 class TrainingData(Sequence):
-    def __init__(self, score, steps=1000, batch_size=batch_size):
+    def __init__(self, score, steps=1000, batch_size=32):
         """
         @param score the cost matrix for the picture matching
         @param steps the number of epoch we are planning with this score matrix
@@ -472,7 +480,7 @@ class TrainingData(Sequence):
         self.steps -= 1
         self.match = []
         self.unmatch = []
-        _, x, _ = lapjv(self.score)  # Solve the linear assignment problem
+        _, _, x = lapjv(self.score)  # Solve the linear assignment problem
         y = np.arange(len(x), dtype=np.int32)
 
         # Compute a derangement for matching whales
@@ -637,7 +645,7 @@ def make_steps(step, ampl):
 
     # Train the model for 'step' epochs
     history = model.fit_generator(
-        TrainingData(score + ampl * np.random.random_sample(size=score.shape), steps=step, batch_size=batch_size),
+        TrainingData(score + ampl * np.random.random_sample(size=score.shape), steps=step, batch_size=32),
         initial_epoch=steps, epochs=steps + step, max_queue_size=12, workers=6, verbose=1).history
     steps += step
 
@@ -656,50 +664,10 @@ if isfile(model_path):
 # if False:
     print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'load model:', model_path)
     tmp = keras.models.load_model(model_path)
+    print (tmp.get_weights())
+    with open('weights_boot.txt','wb') as f:
+        pickle.dump(tmp.get_weights(),f)
     model.set_weights(tmp.get_weights())
-#     with open('weights.txt','rb') as f:
-#         try:
-#             weights=pickle.load(f)
-#         except EOFError:
-#             pass
-#     model.set_weights(weights)
-#     model.save('standard_copy.model')
-else:
-    pass
-if True:
-    # epoch -> 10
-#     make_steps(10, 1000)
-#     ampl = 100.0
-#     for _ in range(2):
-#         print('noise ampl.  = ', ampl)
-#         make_steps(5, ampl)
-#         ampl = max(1.0, 100 ** -0.1 * ampl)
-    # epoch -> 150
-#     for _ in range(18): make_steps(5, 1.0) #change from 18 to 1
-#     # epoch -> 200
-#     set_lr(model, 16e-5)
-#     for _ in range(10): make_steps(5, 0.5)
-#     # epoch -> 240
-#     set_lr(model, 4e-5)
-#     for _ in range(8): make_steps(5, 0.25)
-#     # epoch -> 250
-#     set_lr(model, 1e-5)
-#     for _ in range(2): make_steps(5, 0.25)
-#     # epoch -> 300
-    weights = model.get_weights()
-    model, branch_model, head_model = build_model(64e-5, 0.0002)
-    model.set_weights(weights)
-#     for _ in range(10): make_steps(5, 1.0)
-#     # epoch -> 350
-#     set_lr(model, 16e-5)
-#     for _ in range(10): make_steps(5, 0.5)
-#     # epoch -> 390
-#     set_lr(model, 4e-5)
-#     for _ in range(8): make_steps(5, 0.25)
-#     # epoch -> 400
-    set_lr(model, 1e-5)
-    for _ in range(10): make_steps(5, 0.25) #change from 2 to 10
-    model.save('standard_copy.model')
 
 model.summary()
 
@@ -756,13 +724,17 @@ h2i = {}
 for i, h in enumerate(known): h2i[h] = i
 
 # Evaluate the model.
-fknown = branch_model.predict_generator(FeatureGen(known), max_queue_size=20, workers=10, verbose=0)
-fsubmit = branch_model.predict_generator(FeatureGen(submit), max_queue_size=20, workers=10, verbose=0)
-score = head_model.predict_generator(ScoreGen(fknown, fsubmit), max_queue_size=20, workers=10, verbose=0)
-score = score_reshape(score, fknown, fsubmit)
-
-# Generate the subsmission file.
-prepare_submission(0.99, 'submission.csv')
-toc = time.time()
-print("Submission time: ", (toc - tic) / 60.)
+# print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'predict fknow len=', len(known))
+# fknown = branch_model.predict_generator(FeatureGen(known), max_queue_size=20, workers=10, verbose=0)
+# print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'predict fsubmit len=', len(submit))
+# fsubmit = branch_model.predict_generator(FeatureGen(submit), max_queue_size=20, workers=10, verbose=0)
+# print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'predict score')
+# score = head_model.predict_generator(ScoreGen(fknown, fsubmit), max_queue_size=20, workers=10, verbose=0)
+# score = score_reshape(score, fknown, fsubmit)
+# 
+# # Generate the subsmission file.
+# print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'prepare submission')
+# prepare_submission(0.99, 'submission.csv')
+# toc = time.time()
+# print("Submission time: ", (toc - tic) / 60.)
 

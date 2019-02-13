@@ -1,4 +1,4 @@
-#coding=utf-8
+#!/usr/bin/env python3
 import gzip
 import pickle
 import platform
@@ -7,7 +7,7 @@ import sys
 from math import sqrt
 # Determine the size of each image
 from os.path import isfile
-from lapjv import lapjv
+from lap import lapjv
 import keras
 import matplotlib.pyplot as plt
 import numpy as np
@@ -25,29 +25,9 @@ from keras.preprocessing.image import img_to_array
 from keras.utils import Sequence
 from pandas import read_csv
 from scipy.ndimage import affine_transform
-from tqdm import tqdm_notebook as tqdm
+# from tqdm import tqdm_notebook as tqdm
 import time
 import os
-import tensorflow as tf
-import keras.backend.tensorflow_backend as KTF
-# import pdb
-
-# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-#进行配置，每个GPU使用60%上限现存
-# os.environ["CUDA_VISIBLE_DEVICES"]="0,1" # 使用编号为1，2号的GPU
-# config = tf.ConfigProto()
-# config.gpu_options.per_process_gpu_memory_fraction = 0.9 # 每个GPU现存上届控制在60%以内
-# session = tf.Session(config=config)
-# # 设置session
-# KTF.set_session(session)
-print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'set session start')
-KTF.clear_session()
-os.environ["CUDA_VISIBLE_DEVICES"]="1" 
-config=tf.ConfigProto(device_count={'gpu':1,'cpu':1})
-# config.gpu_options.per_process_gpu_memory_fraction = 0.9
-session=tf.Session(config=config)
-KTF.set_session(session)
-print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'set session end')
 
 # base_dir='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/'
 # TRAIN = base_dir+'train_backup/'
@@ -62,12 +42,13 @@ P2H = base_dir+'metadata/p2h.pickle'
 P2SIZE = base_dir+'metadata/p2size.pickle'
 BB_DF = base_dir+'metadata/bounding_boxes.csv'
 model_path=base_dir+'piotte/mpiotte-standard.model'
-model_path='/home/nemo/models/kaggle/standard_copy.model'
 tagged = dict([(p, w) for _, p, w in read_csv(TRAIN_DF).to_records()])
 submit = [p for _, p, _ in read_csv(SUB_Df).to_records()]
 join = list(tagged.keys()) + submit
-batch_size=32
 
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    
 def expand_path(p):
     if isfile(TRAIN + p):
         return TRAIN + p
@@ -76,12 +57,12 @@ def expand_path(p):
     return p
 
 if isfile(P2SIZE):
-    print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())),"P2SIZE exists.")
+    print("P2SIZE exists.")
     with open(P2SIZE, 'rb') as f:
         p2size = pickle.load(f)
 else:
     p2size = {}
-    for p in tqdm(join):
+    for p in join:
         size = pil_image.open(expand_path(p)).size
         p2size[p] = size
 
@@ -101,14 +82,16 @@ def match(h1, h2):
             if a > 0.1: return False
     return True
 
+
 if isfile(P2H):
-    print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), "P2H exists.")
+    print("P2H exists.")
     with open(P2H, 'rb') as f:
         p2h = pickle.load(f)
 else:
+    print("%s does not exist." %(P2H))
     # Compute phash for each image in the training and test set.
     p2h = {}
-    for p in tqdm(join):
+    for p in join:
         img = pil_image.open(expand_path(p))
         h = phash(img)
         p2h[p] = h
@@ -124,7 +107,7 @@ else:
 
     # If the images are close enough, associate the two phash values (this is the slow part: n^2 algorithm)
     h2h = {}
-    for i, h1 in enumerate(tqdm(hs)):
+    for i, h1 in enumerate(hs):
         for h2 in hs[:i]:
             if h1 - h2 <= 6 and match(h1, h2):
                 s1 = str(h1)
@@ -137,8 +120,8 @@ else:
         h = str(h)
         if h in h2h: h = h2h[h]
         p2h[p] = h
-#     with open(P2H, 'wb') as f:
-#         pickle.dump(p2h, f)
+    with open(P2H, 'wb') as f:
+        pickle.dump(p2h, f)
 # For each image id, determine the list of pictures
 h2ps = {}
 for p, h in p2h.items():
@@ -381,9 +364,8 @@ def build_model(lr, l2, activation='sigmoid'):
     model.compile(optim, loss='binary_crossentropy', metrics=['binary_crossentropy', 'acc'])
     return model, branch_model, head_model
 
-print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'build model')
+print ('build model')
 model, branch_model, head_model = build_model(64e-5, 0)
-print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'build model end')
 
 h2ws = {}
 new_whale = 'new_whale'
@@ -431,7 +413,7 @@ for i, t in enumerate(train):
     
 
 class TrainingData(Sequence):
-    def __init__(self, score, steps=1000, batch_size=batch_size):
+    def __init__(self, score, steps=1000, batch_size=32):
         """
         @param score the cost matrix for the picture matching
         @param steps the number of epoch we are planning with this score matrix
@@ -472,7 +454,7 @@ class TrainingData(Sequence):
         self.steps -= 1
         self.match = []
         self.unmatch = []
-        _, x, _ = lapjv(self.score)  # Solve the linear assignment problem
+        _, _, x = lapjv(self.score)  # Solve the linear assignment problem
         y = np.arange(len(x), dtype=np.int32)
 
         # Compute a derangement for matching whales
@@ -509,6 +491,7 @@ class TrainingData(Sequence):
 score = np.random.random_sample(size=(len(train), len(train)))
 data = TrainingData(score)
 (a, b), c = data[0]
+# print("a=%s b=%s c=%s" %(a,b,c))
 
 # A Keras generator to evaluate only the BRANCH MODEL
 class FeatureGen(Sequence):
@@ -517,7 +500,7 @@ class FeatureGen(Sequence):
         self.data = data
         self.batch_size = batch_size
         self.verbose = verbose
-        if self.verbose > 0: self.progress = tqdm(total=len(self), desc='Features')
+#         if self.verbose > 0: self.progress = tqdm(total=len(self), desc='Features')
 
     def __getitem__(self, index):
         start = self.batch_size * index
@@ -548,8 +531,8 @@ class ScoreGen(Sequence):
             self.ix = self.ix.reshape((self.ix.size,))
             self.iy = self.iy.reshape((self.iy.size,))
         self.subbatch = (len(self.x) + self.batch_size - 1) // self.batch_size
-        if self.verbose > 0:
-            self.progress = tqdm(total=len(self), desc='Scores')
+#         if self.verbose > 0:
+#             self.progress = tqdm(total=len(self), desc='Scores')
 
     def __getitem__(self, index):
         start = index * self.batch_size
@@ -613,7 +596,7 @@ def make_steps(step, ampl):
     @param ampl the K, the randomized component of the score matrix.
     """
     global w2ts, t2i, steps, features, score, histories
-    print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'make_steps step=%s ampl=%s' %(step, ampl))
+
     # shuffle the training pictures
     random.shuffle(train)
 
@@ -631,13 +614,11 @@ def make_steps(step, ampl):
     for i, t in enumerate(train): t2i[t] = i
 
     # Compute the match score for each picture pair
-    print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'compute score start')
     features, score = compute_score()
-    print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'compute score end')
 
     # Train the model for 'step' epochs
     history = model.fit_generator(
-        TrainingData(score + ampl * np.random.random_sample(size=score.shape), steps=step, batch_size=batch_size),
+        TrainingData(score + ampl * np.random.random_sample(size=score.shape), steps=step, batch_size=32),
         initial_epoch=steps, epochs=steps + step, max_queue_size=12, workers=6, verbose=1).history
     steps += step
 
@@ -651,31 +632,24 @@ def make_steps(step, ampl):
 
 histories = []
 steps = 0
-# pdb.set_trace()
-if isfile(model_path):
-# if False:
-    print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'load model:', model_path)
+
+# if isfile(model_path):
+if False:
+    print("%s exists" %(model_path))
     tmp = keras.models.load_model(model_path)
     model.set_weights(tmp.get_weights())
-#     with open('weights.txt','rb') as f:
-#         try:
-#             weights=pickle.load(f)
-#         except EOFError:
-#             pass
-#     model.set_weights(weights)
-#     model.save('standard_copy.model')
+    
 else:
-    pass
-if True:
+    print("%s not exists" %(model_path))
     # epoch -> 10
-#     make_steps(10, 1000)
-#     ampl = 100.0
-#     for _ in range(2):
-#         print('noise ampl.  = ', ampl)
-#         make_steps(5, ampl)
-#         ampl = max(1.0, 100 ** -0.1 * ampl)
-    # epoch -> 150
-#     for _ in range(18): make_steps(5, 1.0) #change from 18 to 1
+    make_steps(10, 1000)
+    ampl = 100.0
+    for _ in range(2):
+        print('noise ampl.  = ', ampl)
+        make_steps(5, ampl)
+        ampl = max(1.0, 100 ** -0.1 * ampl)
+#     # epoch -> 150
+#     for _ in range(18): make_steps(5, 1.0)
 #     # epoch -> 200
 #     set_lr(model, 16e-5)
 #     for _ in range(10): make_steps(5, 0.5)
@@ -686,9 +660,9 @@ if True:
 #     set_lr(model, 1e-5)
 #     for _ in range(2): make_steps(5, 0.25)
 #     # epoch -> 300
-    weights = model.get_weights()
-    model, branch_model, head_model = build_model(64e-5, 0.0002)
-    model.set_weights(weights)
+#     weights = model.get_weights()
+#     model, branch_model, head_model = build_model(64e-5, 0.0002)
+#     model.set_weights(weights)
 #     for _ in range(10): make_steps(5, 1.0)
 #     # epoch -> 350
 #     set_lr(model, 16e-5)
@@ -697,9 +671,9 @@ if True:
 #     set_lr(model, 4e-5)
 #     for _ in range(8): make_steps(5, 0.25)
 #     # epoch -> 400
-    set_lr(model, 1e-5)
-    for _ in range(10): make_steps(5, 0.25) #change from 2 to 10
-    model.save('standard_copy.model')
+#     set_lr(model, 1e-5)
+#     for _ in range(2): make_steps(5, 0.25)
+#     model.save('standard.model')
 
 model.summary()
 
@@ -714,7 +688,7 @@ def prepare_submission(threshold, filename):
     pos = [0, 0, 0, 0, 0, 0]
     with open(filename, 'wt', newline='\n') as f:
         f.write('Image,Id\n')
-        for i, p in enumerate(tqdm(submit)):
+        for i, p in enumerate(submit):
             t = []
             s = set()
             a = score[i, :]

@@ -7,7 +7,7 @@ import sys
 from math import sqrt
 # Determine the size of each image
 from os.path import isfile
-from lapjv import lapjv
+from lap import lapjv
 import keras
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,22 +30,17 @@ import time
 import os
 import tensorflow as tf
 import keras.backend.tensorflow_backend as KTF
+import argparse
+from pygments.lexer import default
 # import pdb
 
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-#进行配置，每个GPU使用60%上限现存
-# os.environ["CUDA_VISIBLE_DEVICES"]="0,1" # 使用编号为1，2号的GPU
-# config = tf.ConfigProto()
-# config.gpu_options.per_process_gpu_memory_fraction = 0.9 # 每个GPU现存上届控制在60%以内
-# session = tf.Session(config=config)
-# # 设置session
-# KTF.set_session(session)
 print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'set session start')
 KTF.clear_session()
 os.environ["CUDA_VISIBLE_DEVICES"]="1" 
 config=tf.ConfigProto(device_count={'gpu':1,'cpu':1})
-# config.gpu_options.per_process_gpu_memory_fraction = 0.9
-session=tf.Session(config=config)
+config.gpu_options.per_process_gpu_memory_fraction = 0.8
+session = tf.Session(config=config)
 KTF.set_session(session)
 print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'set session end')
 
@@ -61,12 +56,20 @@ SUB_Df = base_dir+'sample_submission.csv'
 P2H = base_dir+'metadata/p2h.pickle'
 P2SIZE = base_dir+'metadata/p2size.pickle'
 BB_DF = base_dir+'metadata/bounding_boxes.csv'
-model_path=base_dir+'piotte/mpiotte-standard.model'
-model_path='/home/nemo/models/kaggle/standard_copy.model'
+# model_path=base_dir+'piotte/mpiotte-standard.model'
+# model_path='/home/nemo/models/kaggle/keras_acc_0.89.model'
 tagged = dict([(p, w) for _, p, w in read_csv(TRAIN_DF).to_records()])
 submit = [p for _, p, _ in read_csv(SUB_Df).to_records()]
 join = list(tagged.keys()) + submit
-batch_size=32
+print('tagged:%s submit:%s join:%s' %(len(tagged),len(submit),len(join)))
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', type=str,default='/home/nemo/models/kaggle/keras_rgb.model')
+    return parser.parse_args(argv)
+args=parse_arguments(sys.argv[1:])
+model_path=args.model
+print ('model_path',model_path)
 
 def expand_path(p):
     if isfile(TRAIN + p):
@@ -184,9 +187,15 @@ sys.stderr = open('/dev/null' if platform.system() != 'Windows' else 'nul', 'w')
 
 sys.stderr = old_stderr
 
-img_shape = (384, 384, 1)  # The image shape used by the model
+img_shape = (384, 384, 3)  # The image shape used by the model
 anisotropy = 2.15  # The horizontal compression ratio
 crop_margin = 0.05  # The margin added around the bounding box to compensate for bounding box inaccuracy
+
+def to_rgb(img):
+    w, h = img.shape[:2]
+    ret = np.empty((w, h, 3), dtype=np.float64)
+    ret[:, :, 0] = ret[:, :, 1] = ret[:, :, 2] = img[:,:,0]
+    return ret 
 
 def build_transform(rotation, shear, height_zoom, width_zoom, height_shift, width_shift):
     """
@@ -256,16 +265,27 @@ def read_cropped_image(p, augment):
     trans = np.dot(np.array([[1, 0, 0.5 * (y1 + y0)], [0, 1, 0.5 * (x1 + x0)], [0, 0, 1]]), trans)
 
     # Read the image, transform to black and white and comvert to numpy array
-    img = read_raw_image(p).convert('L')
+    img = read_raw_image(p)
     img = img_to_array(img)
 
     # Apply affine transformation
     matrix = trans[:2, :2]
     offset = trans[:2, 2]
-    img = img.reshape(img.shape[:-1])
-    img = affine_transform(img, matrix, offset, output_shape=img_shape[:-1], order=1, mode='constant',
-                           cval=np.average(img))
-    img = img.reshape(img_shape)
+#     pdb.set_trace()
+    if img.shape[2] == 1:
+#         print (p, img.shape)
+        img = to_rgb(img)
+    img0 = img[:,:,0]
+    img1 = img[:,:,1]
+    img2 = img[:,:,2]
+    
+    img0 = affine_transform(img0, matrix, offset, output_shape=img_shape[:-1], order=1, mode='constant',
+                           cval=np.average(img0))
+    img1 = affine_transform(img1, matrix, offset, output_shape=img_shape[:-1], order=1, mode='constant',
+                           cval=np.average(img1))
+    img2 = affine_transform(img2, matrix, offset, output_shape=img_shape[:-1], order=1, mode='constant',
+                           cval=np.average(img2))
+    img = np.stack([img0,img1,img2],2)
     
     # Normalize to zero mean and unit variance
     img -= np.mean(img, keepdims=True)
@@ -431,7 +451,7 @@ for i, t in enumerate(train):
     
 
 class TrainingData(Sequence):
-    def __init__(self, score, steps=1000, batch_size=batch_size):
+    def __init__(self, score, steps=1000, batch_size=32):
         """
         @param score the cost matrix for the picture matching
         @param steps the number of epoch we are planning with this score matrix
@@ -472,7 +492,7 @@ class TrainingData(Sequence):
         self.steps -= 1
         self.match = []
         self.unmatch = []
-        _, x, _ = lapjv(self.score)  # Solve the linear assignment problem
+        _, _, x = lapjv(self.score)  # Solve the linear assignment problem
         y = np.arange(len(x), dtype=np.int32)
 
         # Compute a derangement for matching whales
@@ -637,7 +657,7 @@ def make_steps(step, ampl):
 
     # Train the model for 'step' epochs
     history = model.fit_generator(
-        TrainingData(score + ampl * np.random.random_sample(size=score.shape), steps=step, batch_size=batch_size),
+        TrainingData(score + ampl * np.random.random_sample(size=score.shape), steps=step, batch_size=32),
         initial_epoch=steps, epochs=steps + step, max_queue_size=12, workers=6, verbose=1).history
     steps += step
 
@@ -657,51 +677,9 @@ if isfile(model_path):
     print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'load model:', model_path)
     tmp = keras.models.load_model(model_path)
     model.set_weights(tmp.get_weights())
-#     with open('weights.txt','rb') as f:
-#         try:
-#             weights=pickle.load(f)
-#         except EOFError:
-#             pass
-#     model.set_weights(weights)
-#     model.save('standard_copy.model')
-else:
-    pass
-if True:
-    # epoch -> 10
-#     make_steps(10, 1000)
-#     ampl = 100.0
-#     for _ in range(2):
-#         print('noise ampl.  = ', ampl)
-#         make_steps(5, ampl)
-#         ampl = max(1.0, 100 ** -0.1 * ampl)
-    # epoch -> 150
-#     for _ in range(18): make_steps(5, 1.0) #change from 18 to 1
-#     # epoch -> 200
-#     set_lr(model, 16e-5)
-#     for _ in range(10): make_steps(5, 0.5)
-#     # epoch -> 240
-#     set_lr(model, 4e-5)
-#     for _ in range(8): make_steps(5, 0.25)
-#     # epoch -> 250
-#     set_lr(model, 1e-5)
-#     for _ in range(2): make_steps(5, 0.25)
-#     # epoch -> 300
-    weights = model.get_weights()
-    model, branch_model, head_model = build_model(64e-5, 0.0002)
-    model.set_weights(weights)
-#     for _ in range(10): make_steps(5, 1.0)
-#     # epoch -> 350
-#     set_lr(model, 16e-5)
-#     for _ in range(10): make_steps(5, 0.5)
-#     # epoch -> 390
-#     set_lr(model, 4e-5)
-#     for _ in range(8): make_steps(5, 0.25)
-#     # epoch -> 400
-    set_lr(model, 1e-5)
-    for _ in range(10): make_steps(5, 0.25) #change from 2 to 10
-    model.save('standard_copy.model')
-
+print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'model summary start')
 model.summary()
+print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'model summary end')
 
 def prepare_submission(threshold, filename):
     """
@@ -756,12 +734,16 @@ h2i = {}
 for i, h in enumerate(known): h2i[h] = i
 
 # Evaluate the model.
+print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'predict fknow len=', len(known))
 fknown = branch_model.predict_generator(FeatureGen(known), max_queue_size=20, workers=10, verbose=0)
+print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'predict fsubmit len=', len(submit))
 fsubmit = branch_model.predict_generator(FeatureGen(submit), max_queue_size=20, workers=10, verbose=0)
+print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'predict score')
 score = head_model.predict_generator(ScoreGen(fknown, fsubmit), max_queue_size=20, workers=10, verbose=0)
 score = score_reshape(score, fknown, fsubmit)
 
 # Generate the subsmission file.
+print (time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), 'prepare submission')
 prepare_submission(0.99, 'submission.csv')
 toc = time.time()
 print("Submission time: ", (toc - tic) / 60.)

@@ -1,61 +1,31 @@
+#!/usr/bin/env python3
 #coding=utf-8
+
 from __future__ import absolute_import
-import csv 
-import numpy as np
-import os
-import shutil
-from pandas import read_csv
-import cv2
+
+
+# import shutil
+# from pandas import read_csv
+# import cv2
 import aircv as ac
 from PIL.ImageDraw import Draw
-from scipy import misc
+# from scipy import misc
 import matplotlib.pyplot as plt
 from keras.preprocessing import image
-import tensorflow as tf
-from skimage import transform
+# import tensorflow as tf
+# from skimage import transform
+# from tensorflow.python.framework import ops
+# from PIL import Image
+# from keras.preprocessing.image import img_to_array
+from lap import lapjv
 import numpy as np
-from tensorflow.python.framework import ops
-from PIL import Image
-from keras.preprocessing.image import img_to_array
-from scipy.ndimage.interpolation import affine_transform
-
-img1_path='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/clean_test/0a0ec5a23.jpg'
-img=Image.open(img1_path).convert('L')
-img = img_to_array(img)
-
-shear=5
-shear_rad=np.deg2rad(shear)
-shear_matrix = np.array([[1, np.sin(shear_rad), 0], [0, np.cos(shear_rad), 0], [0, 0, 1]])
-
-matrix = shear_matrix[:2, :2]
-offset = shear_matrix[:2, 2]
-img_shape=img.shape
-img = img.reshape(img.shape[:-1])
-img = affine_transform(img, matrix, offset, output_shape=img_shape[:-1], order=1, mode='constant',
-                           cval=np.average(img))
-print img_shape[:2]
-img = img.reshape(img_shape[:2])
-plt.subplot(121)
-img1=misc.imread(img1_path)
-plt.imshow(img1)
-plt.subplot(122)
-plt.imshow(img)
-plt.show()
-
-def XWarp(image,angle):
-    a = math.tan(angle*math.pi/180.0)
-    W = image.width
-    H = int(image.height+W*a)
-    size = (W,H)
-    iWarp = cv2.CreateImage(size,image.depth,image.nChannels)
-    for i in range(image.height):
-        for j in range(image.width):
-            x = int(i+j*a)
-            iWarp[x,j] = image[i,j]
-    return iWarp
+import time
 
 
-# img1_path='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/clean_test_384/0a0ec5a23.jpg'
+
+
+
+
 # file_contents = tf.read_file(img1_path)
 # image = misc.imread(img1_path)
 # print (image.shape)
@@ -66,35 +36,40 @@ def XWarp(image,angle):
 # image=transform.rotate(image, angle)
 # image = misc.imrotate([image], angle, 'bicubic')
 
-# def find_image_pos():               
-#     img1_path='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/train_backup/0ef8ede21.jpg'
-#     img2_path='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/clean_train_mine_v1/0ef8ede21.jpg'
-#     
-#     img1=ac.imread(img1_path)
-#     img2=ac.imread(img2_path)
-#     
-#     pos=ac.find_template(img1,img2)
-#     print (pos)
-#     print (pos.get('rectangle'))
-#     x0=pos.get('rectangle')[0][0]
-#     y0=pos.get('rectangle')[0][1]
-#     x1=pos.get('rectangle')[3][0]
-#     y1=pos.get('rectangle')[3][1]
-#     
-#     print x0,y0,x1,y1
-#     
-#     
-#     # img1=misc.imread(img1_path)
-#     img1=image.load_img(img1_path)
-#     img2=image.load_img(img2_path)
-#     print img1.size
-#     print img2.size
-#     draw=Draw(img1)
-#     draw.rectangle([x0,y0,x1,y1], outline='red')
+def find_image_pos():               
+    img1_path='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/train_backup/0ef8ede21.jpg'
+    img2_path='/Users/chendanxia/sophie/kaggle/humpback-whale-identification/data/clean_train/0ef8ede21.jpg'
+     
+    img1=ac.imread(img1_path)
+    img2=ac.imread(img2_path)
+     
+    pos=ac.find_template(img1,img2)
+    print (pos)
+    print (pos.get('rectangle'))
+    x0=pos.get('rectangle')[0][0]
+    y0=pos.get('rectangle')[0][1]
+    x1=pos.get('rectangle')[3][0]
+    y1=pos.get('rectangle')[3][1]
+     
+    print x0,y0,x1,y1
+     
+     
+    # img1=misc.imread(img1_path)
+    img1_1=image.load_img(img1_path)
+    img2=image.load_img(img2_path)
+    print img1_1.size
+    print img2.size
+    draw=Draw(img1_1)
+    draw.rectangle([x0,y0,x1,y1], outline='red')
+#     plt.subplot(131)
+    plt.imshow(img1_1)
+#     plt.subplot(132)
 #     plt.imshow(img1)
-#     plt.show()
+#     plt.subplot(133)
+#     plt.imshow(img2)
+    plt.show()
 
-
+find_image_pos()
 
 
 
